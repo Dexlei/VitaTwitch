@@ -156,3 +156,7 @@ reduce a 640 px de ancho). La preferencia se guarda (`chat=1` en `settings.txt`)
 - TLS sin verificación de certificado (la Vita no tiene CAs actuales; NetStream hace lo mismo).
 - 720p60 depende de que el decodificador aguante 60 fps; si se descartan muchos frames, usa 720p.
 - Chat solo de lectura; sin VODs ni clips todavía.
+
+## Licencia
+
+MIT. Consulta [LICENSE](LICENSE).
