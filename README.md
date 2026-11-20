@@ -79,6 +79,9 @@ Si la consola muestra un error del sistema (C2-12828-1…), el volcado está en 
    anuncios insertados** (segmentos cuyo título no es `live`).
 4. `ts_demux.c`: demuxer MPEG-TS; reensambla los access units H.264 por NAL AUD (Twitch no
    alinea PES con frames) y mantiene los timestamps continuos tras discontinuidades.
+   `mp4_demux.c`: los canales con *Enhanced Broadcasting* usan fMP4/CMAF (`#EXT-X-MAP` +
+   segmentos `.mp4`); se lee la cabecera (avcC/esds) y cada `moof`/`trun`, y se entrega lo
+   mismo que el demuxer TS (H.264 Annex B con SPS/PPS en cada keyframe y AAC con cabecera ADTS).
 5. `player.c`: H.264 → `sceAvcdecDecode` directo a una textura de vita2d; AAC → `sceAudiodecDecode`
    → `sceAudioOut`. El audio es el reloj maestro; los frames tardíos se descartan.
 
@@ -101,7 +104,7 @@ TLS) llamando directamente a los decodificadores.
 | `chat.c` | Chat IRC (hilo), parser, emotes de Twitch y 7TV |
 | `chat_view.c` | Dibujo del panel de chat |
 | `text.c` | Limpieza de texto (emojis que la fuente no dibuja) |
-| `hls.c`, `ts_demux.c`, `m3u8.c`, `pktqueue.c`, `player.c` | Reproductor |
+| `hls.c`, `ts_demux.c`, `mp4_demux.c`, `m3u8.c`, `pktqueue.c`, `player.c` | Reproductor |
 
 ## Compilar
 
@@ -120,7 +123,11 @@ Genera `VitaTwitch.vpk`. Instálalo con VitaShell (la consola necesita HENkaku/E
 gcc -DVT_NO_NET -Isrc tests/host_test.c src/ts_demux.c src/m3u8.c src/twitch.c src/json.c src/log.c -o host_test.exe
 gcc -DVT_NO_NET -Isrc tests/api_test.c src/json.c src/twitch.c src/auth.c src/m3u8.c src/log.c -o api_test.exe
 gcc -DVT_NO_NET -Isrc tests/chat_test.c src/chat.c src/json.c src/text.c src/log.c -o chat_test.exe
+gcc -DVT_NO_NET -Isrc tests/mp4_test.c src/mp4_demux.c -o mp4_test.exe
 ```
+
+- `mp4_test init.mp4 seg1.mp4 ...`: demuxer fMP4 con la cabecera y segmentos reales de un canal
+  con Enhanced Broadcasting.
 
 - `chat_test global.json user.json irc.txt`: parser IRC, emotes de Twitch por posición, sets de
   7TV reales y una captura real de chat.

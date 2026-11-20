@@ -19,8 +19,11 @@ typedef struct {
     float duration;
     int discontinuity;    /* EXT-X-DISCONTINUITY precedes this segment */
     int is_ad;            /* Twitch stitched ad (title is not "live") */
+    int map;              /* index into m3u8_media_t.map_url (fMP4 init segment), -1 = none (MPEG-TS) */
     char url[M3U8_URL_MAX];
 } m3u8_segment_t;
+
+#define M3U8_MAX_MAPS 4
 
 typedef struct {
     float target_duration;
@@ -28,6 +31,8 @@ typedef struct {
     int ended;
     int count;
     m3u8_segment_t seg[M3U8_MAX_SEGMENTS];
+    int nmap;
+    char map_url[M3U8_MAX_MAPS][M3U8_URL_MAX]; /* #EXT-X-MAP URIs (fMP4 / CMAF streams) */
 } m3u8_media_t;
 
 /* Parses a master playlist. Returns the number of variants. */

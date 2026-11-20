@@ -13,7 +13,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(VITA_APP_NAME "VitaTwitch")
 set(VITA_TITLEID  "VTWI00001")
-set(VITA_VERSION  "01.31")
+set(VITA_VERSION  "01.32")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -std=gnu11")
 
@@ -35,6 +35,7 @@ add_executable(${PROJECT_NAME}
   src/text.c
   src/chat.c
   src/chat_view.c
+  src/mp4_demux.c
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -74,3 +75,9 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   FILE sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
   FILE sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
 )
+
+# vita-elf-create appends ~4 KB of SCE module data right after the text
+# segment. When the code ended just below a 64 KB boundary that data overlapped
+# the data segment and the tool crashed (0xc0000374). VitaSDK's linker script
+# reserves this headroom before the data segment when __sce_headroom is defined.
+target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--defsym,__sce_headroom=0x4000")

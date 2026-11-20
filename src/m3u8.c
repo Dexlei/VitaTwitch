@@ -117,7 +117,7 @@ int m3u8_parse_media(const char *text, const char *base_url, m3u8_media_t *out)
     static char line[M3U8_URL_MAX + 64];
     const char *p = text;
     long long idx = 0;
-    int disc = 0, is_ad = 0, have_inf = 0;
+    int disc = 0, is_ad = 0, have_inf = 0, cur_map = -1;
     float dur = 0;
 
     memset(out, 0, sizeof(*out));
@@ -132,6 +132,34 @@ int m3u8_parse_media(const char *text, const char *base_url, m3u8_media_t *out)
             out->media_sequence = atoll(line + 22);
         } else if (!strncmp(line, "#EXT-X-DISCONTINUITY", 20) && line[20] == 0) {
             disc = 1;
+        } else if (!strncmp(line, "#EXT-X-MAP:", 11)) {
+            /* fMP4: init segment for the following media segments */
+            const char *u = strstr(line, "URI=\"");
+            if (u) {
+                u += 5;
+                const char *e = strchr(u, '"');
+                char ref[M3U8_URL_MAX];
+                size_t l = e ? (size_t)(e - u) : strlen(u);
+                if (l >= sizeof(ref)) l = sizeof(ref) - 1;
+                memcpy(ref, u, l);
+                ref[l] = 0;
+                char abs[M3U8_URL_MAX];
+                resolve_url(base_url, ref, abs, sizeof(abs));
+                cur_map = -1;
+                for (int k = 0; k < out->nmap; k++)
+                    if (!strcmp(out->map_url[k], abs))
+                        cur_map = k;
+                if (cur_map < 0) {
+                    if (out->nmap == M3U8_MAX_MAPS) { /* keep the newest ones */
+                        memmove(out->map_url[0], out->map_url[1], sizeof(out->map_url[0]) * (M3U8_MAX_MAPS - 1));
+                        out->nmap--;
+                        for (int k = 0; k < out->count; k++)
+                            out->seg[k].map = out->seg[k].map > 0 ? out->seg[k].map - 1 : -1;
+                    }
+                    snprintf(out->map_url[out->nmap], sizeof(out->map_url[0]), "%s", abs);
+                    cur_map = out->nmap++;
+                }
+            }
         } else if (!strncmp(line, "#EXT-X-ENDLIST", 14)) {
             out->ended = 1;
         } else if (!strncmp(line, "#EXTINF:", 8)) {
@@ -152,6 +180,7 @@ int m3u8_parse_media(const char *text, const char *base_url, m3u8_media_t *out)
                 s->duration = dur;
                 s->discontinuity = disc;
                 s->is_ad = is_ad;
+                s->map = cur_map;
                 resolve_url(base_url, line, s->url, sizeof(s->url));
             }
             idx++;

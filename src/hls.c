@@ -62,6 +62,12 @@ static void sleep_ms_while_running(hls_t *h, int ms)
     }
 }
 
+static void demux_discontinuity(hls_t *h)
+{
+    ts_demux_discontinuity(&h->demux);
+    mp4_demux_discontinuity(&h->mp4);
+}
+
 static int hls_thread(SceSize args, void *argp)
 {
     hls_t *h = *(hls_t **)argp;
@@ -104,7 +110,7 @@ static int hls_thread(SceSize args, void *argp)
             /* fell behind the playlist window: jump forward */
             LOGW("hls: descarga demasiado lenta, salto %lld segmentos", media.seg[0].seq - next_seq);
             next_seq = media.seg[0].seq;
-            ts_demux_discontinuity(&h->demux);
+            demux_discontinuity(h);
         }
 
         int got_new = 0;
@@ -119,14 +125,31 @@ static int hls_thread(SceSize args, void *argp)
                 if (!h->in_ad)
                     LOGI("hls: empieza un anuncio, se salta");
                 h->in_ad = 1;
-                ts_demux_discontinuity(&h->demux);
+                demux_discontinuity(h);
                 continue;
             }
             if (h->in_ad)
                 LOGI("hls: fin del anuncio");
             h->in_ad = 0;
             if (s->discontinuity)
-                ts_demux_discontinuity(&h->demux);
+                demux_discontinuity(h);
+
+            /* fMP4 stream: (re)load the init segment when it changes */
+            if (s->map >= 0 && s->map < media.nmap && strcmp(h->map_loaded, media.map_url[s->map])) {
+                int iok = 0;
+                for (int attempt = 0; attempt < 2 && h->running && !iok; attempt++)
+                    iok = http_request(c, media.map_url[s->map], NULL, NULL, &seg, &status, &h->abort_req) == 0 &&
+                          status == 200;
+                if (iok && mp4_demux_set_init(&h->mp4, seg.data, seg.size) == 0) {
+                    if (!h->map_loaded[0])
+                        LOGI("hls: formato fMP4 (CMAF), %d pistas, H.264 %s, AAC %s", h->mp4.ntrk,
+                             h->mp4.ps.size ? "si" : "no", h->mp4.aac_object ? "si" : "no");
+                    snprintf(h->map_loaded, sizeof(h->map_loaded), "%s", media.map_url[s->map]);
+                } else if (h->running) {
+                    LOGE("hls: no se pudo leer la cabecera fMP4 (HTTP %ld, %u bytes)", status, (unsigned)seg.size);
+                    continue;
+                }
+            }
 
             int ok = 0;
             for (int attempt = 0; attempt < 2 && h->running && !ok; attempt++) {
@@ -137,12 +160,22 @@ static int hls_thread(SceSize args, void *argp)
             if (!ok) {
                 if (h->running)
                     LOGW("hls: segmento #%lld perdido (HTTP %ld)", s->seq, status);
-                ts_demux_discontinuity(&h->demux);
+                demux_discontinuity(h);
                 continue;
             }
-            if (ts_demux_feed(&h->demux, seg.data, seg.size) < 0 ||
-                ts_demux_flush(&h->demux) < 0)
+            if (mp4_looks_like(seg.data, seg.size)) {
+                int r = mp4_demux_feed(&h->mp4, seg.data, seg.size);
+                if (r == -2) {
+                    if (!h->segments_done)
+                        LOGE("hls: segmento fMP4 sin cabecera (EXT-X-MAP)");
+                    continue;
+                }
+                if (r < 0)
+                    break; /* aborted */
+            } else if (ts_demux_feed(&h->demux, seg.data, seg.size) < 0 ||
+                       ts_demux_flush(&h->demux) < 0) {
                 break; /* aborted */
+            }
             h->segments_done++;
         }
 
@@ -170,6 +203,7 @@ int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq)
     h->aq = aq;
     h->running = 1;
     ts_demux_init(&h->demux, on_es, h);
+    mp4_demux_init(&h->mp4, on_es, h);
 
     /* curl + OpenSSL need a generous stack */
     h->thread = sceKernelCreateThread("vt_hls", hls_thread, 0x10000100, 512 * 1024, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
@@ -196,4 +230,5 @@ void hls_stop(hls_t *h)
         }
     }
     ts_demux_free(&h->demux);
+    mp4_demux_free(&h->mp4);
 }
