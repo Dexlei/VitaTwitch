@@ -45,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.33-qualityfix1"
+#define APP_VERSION   "1.33-quality-region"
 
 #define MAX_ITEMS 100
 
@@ -74,6 +74,26 @@ static int g_auth_checking;
 static char g_pref_quality[32];
 static char g_search[64];
 static int g_chat_on = 1;
+/* 0 = automatic UI language, 1 = all, then explicit broadcast languages. */
+static const char *const region_codes[]={"AUTO","","PT","EN","ES","FR","DE","IT","RU","JA","KO","ZH","ZH_HK","ID","TL","NL","PL","TR","UK","SV","AR","TH","VI","OTHER"};
+static const char *const region_names[]={"Auto","ALL","Português","English","Español","Français","Deutsch","Italiano","Русский","日本語","한국어","中文","中文 (香港)","Bahasa Indonesia","Filipino","Nederlands","Polski","Türkçe","Українська","Svenska","العربية","ไทย","Tiếng Việt","OTHER"};
+#define REGION_COUNT ((int)(sizeof(region_codes)/sizeof(region_codes[0])))
+static int g_region=0;
+static const char *region_code(void){
+    static const char *const by_ui[]={"EN","ES","PT","FR","IT","DE","RU","ID","TL","TL","NL","PL","TR","UK","SV","JA","KO","ZH","ZH"};
+    int lang=vt_lang_current();
+    return g_region?region_codes[g_region]:(lang>=0&&lang<19?by_ui[lang]:"EN");
+}
+static const char *region_label(int i){
+    if(i==0)return vt_lang_current()==2?"Automático":"Auto";
+    if(i==1)return vt_lang_current()==2?"Todos os idiomas":"All languages";
+    if(i==REGION_COUNT-1)return vt_lang_current()==2?"Outros":"Other";
+    return region_names[i];
+}
+static const char *region_title(void){
+    static const char *const labels[]={"Live languages","Idioma de directos","Idioma das lives","Langue des lives","Lingua delle live","Stream-Sprache","Язык трансляций","Bahasa siaran","Wika ng live","Pinulongan sa live","Streamtaal","Język transmisji","Yayın dili","Мова трансляцій","Streams språk","配信言語","방송 언어","直播语言","直播語言"};
+    int i=vt_lang_current();return i>=0&&i<19?labels[i]:labels[0];
+}
 static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=0, g_diag=0, g_volume=100, g_remember=1;
 static unsigned long long g_auth_last_check;
 static int g_touch_manual_scroll = 0;
@@ -155,6 +175,7 @@ static void settings_load(void)
             g_chat_on = atoi(line + 5) != 0;
         else if (!strncmp(line, "lang=", 5))
             vt_lang_set_code(line + 5);
+        else if (!strncmp(line,"region=",7)) {for(int i=0;i<REGION_COUNT;i++)if(!strcmp(line+7,region_codes[i])){g_region=i;break;}}
         else if (!strncmp(line, "profile=", 8)) {int p=atoi(line+8);if(p>=0&&p<VT_PROFILE_COUNT)g_profile=p;}
         else if (!strncmp(line, "auto_quality=", 13)) g_auto_quality=atoi(line+13)!=0;
         else if (!strncmp(line, "diag=", 5)) g_diag=atoi(line+5)!=0;
@@ -176,6 +197,7 @@ static void settings_save(void)
             g_pref_quality, g_search, g_chat_on,
             vt_lang_code(vt_lang_current()), ui_touch_enabled());
     fprintf(f,"profile=%d\nauto_quality=%d\ndiag=%d\nvolume=%d\nremember=%d\n",g_profile,g_auto_quality,g_diag,g_volume,g_remember);
+    fprintf(f,"region=%s\n",region_codes[g_region]);
     fclose(f);
 }
 
@@ -233,7 +255,7 @@ static void tab_load(int t)
     }
     list_job_t *j = &tb->job;
     j->kind = t == TAB_FOLLOWED ? TW_LIST_FOLLOWED : t == TAB_EXPLORE ? TW_LIST_TOP : TW_LIST_SEARCH;
-    snprintf(j->query, sizeof(j->query), "%s", g_search);
+    snprintf(j->query, sizeof(j->query), "%s", t==TAB_EXPLORE?region_code():g_search);
     snprintf(j->oauth, sizeof(j->oauth), "%s", g_logged ? g_auth.access : "");
     if (task_start(&tb->task, list_job_run, j) == 0) {
         tb->busy = 1;
@@ -249,6 +271,7 @@ static void tabs_update(void)
         if (!tb->busy || !task_done(&tb->task))
             continue;
         tb->busy = 0;
+        if(t==TAB_EXPLORE && strcmp(tb->job.query,region_code())){tb->state=LS_EMPTY;tb->count=0;tab_load(t);continue;}
         if (tb->job.n >= 0)
             LOGI("%s: %d canales", tab_name(t), tb->job.n);
         else if (tb->job.n == -2)
@@ -1121,6 +1144,7 @@ static void language_screen(void)
         }
         if(choose) {
             vt_lang_set(sel);
+            if(g_region==0){g_tabs[TAB_EXPLORE].count=0;g_tabs[TAB_EXPLORE].state=LS_EMPTY;tab_load(TAB_EXPLORE);}
             settings_save();
             LOGI("ui language selected: %s",vt_lang_code(sel));
             return;
@@ -1140,10 +1164,59 @@ static void language_screen(void)
         frame_end();
     }
 }
+static void region_screen(void)
+{
+    int sel=g_region,top=sel>7?sel-7:0;
+    const int x=210,y=34,w=540,h=476,row=44,vis=8;
+    int dirty=1;
+    ui_input_poll(&g_in);
+    for(;;){
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT))return;
+        int before=sel,choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.pressed&SCE_CTRL_UP)sel=(sel+REGION_COUNT-1)%REGION_COUNT;
+        if(g_in.pressed&SCE_CTRL_DOWN)sel=(sel+1)%REGION_COUNT;
+        if(g_in.pressed&SCE_CTRL_LEFT)sel=sel>=vis?sel-vis:0;
+        if(g_in.pressed&SCE_CTRL_RIGHT)sel=sel+vis<REGION_COUNT?sel+vis:REGION_COUNT-1;
+        if(g_in.touch_tap){
+            if(!ui_touch_hit(&g_in,x,y,w,h))return;
+            for(int k=0;k<vis && top+k<REGION_COUNT;k++)
+                if(ui_touch_hit(&g_in,x+16,y+62+k*row,w-32,row-4)){sel=top+k;choose=1;break;}
+        }
+        if(g_in.touch_dragged && g_in.touch_dy>18 && sel>0)sel--;
+        if(g_in.touch_dragged && g_in.touch_dy<-18 && sel<REGION_COUNT-1)sel++;
+        if(choose){
+            g_region=sel;settings_save();
+            tab_t *tb=&g_tabs[TAB_EXPLORE];
+            tb->count=0;tb->sel=0;tb->scroll=0;tb->state=LS_EMPTY;
+            tab_load(TAB_EXPLORE);
+            LOGI("Explore language: %s",region_code());
+            return;
+        }
+        if(sel<top)top=sel;
+        if(sel>=top+vis)top=sel-vis+1;
+        if(before!=sel)dirty=1;
+        if(!dirty){sceKernelDelayThread(8000);continue;}
+        vita2d_start_drawing();vita2d_clear_screen();
+        vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
+        vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
+        ui_text_fit(x+24,y+40,w-48,C_WHITE,1.15f,region_title());
+        for(int k=0;k<vis&&top+k<REGION_COUNT;k++){
+            int i=top+k,ry=y+62+k*row;
+            vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==sel?C_PURPLE:C_PANEL);
+            ui_text_fit(x+28,ry+28,w-140,C_WHITE,0.95f,region_label(i));
+            if(i==g_region)ui_text_fit(x+w-105,ry+28,75,C_WHITE,0.8f,vt_tr(VT_I_ON));
+        }
+        ui_hint(x+24,y+h-22,g_ok_name,vt_tr(VT_I_PLAY));
+        ui_hint(x+w/2,y+h-22,g_back_name,vt_tr(VT_I_BACK));
+        vita2d_end_drawing();vita2d_swap_buffers();dirty=0;
+        sceKernelDelayThread(8000);
+    }
+}
 static void extras_menu(void)
 {
     /* All entries share the same hit boxes for touch and controller use. */
-    const int x=145,y=20,w=670,h=504,row=39,count=11;
+    const int x=145,y=20,w=670,h=504,row=35,count=12;
     int sel=0;
     for(;;) {
         ui_input_poll(&g_in);
@@ -1168,7 +1241,8 @@ static void extras_menu(void)
                 case 7:g_auto_quality=!g_auto_quality;settings_save();break;
                 case 8:g_diag=!g_diag;settings_save();break;
                 case 9:g_remember=!g_remember;if(g_remember&&g_logged)auth_save(&g_auth,AUTH_FILE);else sceIoRemove(AUTH_FILE);settings_save();break;
-                case 10:return;
+                case 10:region_screen();break;
+                case 11:return;
             }
         }
         frame_begin();draw_home();
@@ -1179,9 +1253,10 @@ static void extras_menu(void)
             if(sel==i)ui_round_rect(x+14,yy,w-28,row-4,7,C_PURPLE);
             const char *label=i==0?vt_tr(VT_I_ACCOUNT):i==1?vt_tr(VT_I_LANGUAGE):
                 i==2?vt_tr(VT_I_TOUCH):i==3?vt_tr(VT_I_CHAT):
-                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):i==6?vt_opt(VT_O_PROFILE):i==7?vt_opt(VT_O_AUTO):i==8?vt_opt(VT_O_DIAG):i==9?vt_opt(VT_O_REMEMBER):vt_tr(VT_I_CLOSE);
+                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):i==6?vt_opt(VT_O_PROFILE):i==7?vt_opt(VT_O_AUTO):i==8?vt_opt(VT_O_DIAG):i==9?vt_opt(VT_O_REMEMBER):i==10?region_title():vt_tr(VT_I_CLOSE);
             ui_text_fit(x+32,yy+31,w-220,C_WHITE,0.97f,label);
             if(i==1) ui_text_fit(x+w-182,yy+31,157,C_GREY,0.76f,vt_lang_code(vt_lang_current()));
+            if(i==10)ui_text_fit(x+w-215,yy+27,190,C_WHITE,0.83f,region_label(g_region));
             if(i==6)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,vt_opt((vt_option_id)(VT_O_ECONOMY+g_profile)));
             if(i==2||i==3||i==7||i==8||i==9)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,
                 (i==2?ui_touch_enabled():i==3?g_chat_on:i==7?g_auto_quality:i==8?g_diag:g_remember)?vt_tr(VT_I_ON):vt_tr(VT_I_OFF));
