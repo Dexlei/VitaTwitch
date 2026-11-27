@@ -13,6 +13,8 @@ typedef struct {
     vita2d_pgf *font;
     unsigned btn_back;      /* SCE_CTRL_* used to leave the player */
     const char *login;      /* channel login (chat room) */
+    const char *chat_nick;  /* logged-in Twitch account (nullable) */
+    const char *chat_oauth; /* OAuth token with chat:read,chat:edit (nullable) */
     int *chat_on;           /* in/out: chat panel visible (remembered by the caller) */
 } player_params_t;
 
