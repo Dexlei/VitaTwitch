@@ -623,21 +623,34 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
     memset(vp, 0, sizeof(*vp));
     vp->v = v;
     vp->pp = pp;
-    pthread_mutex_init(&vp->lock, NULL);
+    LOGI("startup: video mutex begin");
+    int lock_rc = pthread_mutex_init(&vp->lock, NULL);
+    if (lock_rc != 0) {
+        snprintf(err, (size_t)errlen, "Video mutex error: %d", lock_rc);
+        return -1;
+    }
+    LOGI("startup: video mutex ready");
 
-    /* as many 1280x720 RGBA textures as fit in ~32 MB, between 4 and 8 */
+    /* Limit the initial texture ring to leave GPU memory for the UI. */
     size_t frame_bytes = (size_t)v->w * v->h * 4;
-    int want = (int)((32u * 1024 * 1024) / frame_bytes);
-    if (want > MAX_SLOTS) want = MAX_SLOTS;
-    /* the decoder reserves DEC_PICS free slots per call and one is on screen:
-     * with fewer than DEC_PICS + 3 it can't run ahead and video stays late
-     * after any hiccup (1080p). Fewer are still accepted if memory runs out. */
-    if (want < DEC_PICS + 3) want = DEC_PICS + 3;
+    int want = (int)((18u * 1024 * 1024) / frame_bytes);
+    if (want > 6) want = 6;
+    if (want < DEC_PICS + 1) want = DEC_PICS + 1;
+    LOGI("startup: texture ring %dx%d target=%d", v->w, v->h, want);
     for (int i = 0; i < want; i++) {
+        LOGI("startup: allocate texture %d/%d", i+1, want);
         vita2d_texture *t = vita2d_create_empty_texture_format(v->w, v->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-        if (!t)
+        if (!t) { LOGW("startup: texture allocation failed at %d", i+1); break; }
+        void *data = vita2d_texture_get_datap(t);
+        unsigned stride = vita2d_texture_get_stride(t);
+        if (!data || stride < (unsigned)v->w * 4) {
+            LOGE("startup: invalid texture data or stride=%u", stride);
+            vita2d_free_texture(t);
             break;
-        memset(vita2d_texture_get_datap(t), 0, (size_t)vita2d_texture_get_stride(t) * v->h);
+        }
+        LOGI("startup: clear texture %d stride=%u", i+1, stride);
+        memset(data, 0, (size_t)stride * v->h);
+        LOGI("startup: texture %d ready", i+1);
         vp->slot[vp->nslot].tex = t;
         vp->slot[vp->nslot].state = SLOT_FREE;
         vp->nslot++;
@@ -651,16 +664,20 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
     v->pitch = vita2d_texture_get_stride(vp->slot[0].tex) / 4;
 
     vp->running = 1;
+    LOGI("startup: create video thread");
     vp->thread = sceKernelCreateThread("vt_vdec", vdec_thread, 0x10000100 - 10, 64 * 1024, 0,
                                        SCE_KERNEL_CPU_MASK_USER_1, NULL);
-    if (vp->thread < 0 || sceKernelStartThread(vp->thread, 0, NULL) < 0) {
+    LOGI("startup: video thread create result=0x%08X", (unsigned)vp->thread);
+    int start_rc = vp->thread < 0 ? vp->thread : sceKernelStartThread(vp->thread, 0, NULL);
+    if (start_rc < 0) {
+        if (vp->thread >= 0) sceKernelDeleteThread(vp->thread);
         snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de video"));
-        LOGE("video: %s (0x%08X)", err, (unsigned)vp->thread);
+        LOGE("video: %s (0x%08X)", err, (unsigned)start_rc);
         vp->running = 0;
         vpipe_free(vp);
         return -1;
     }
-    LOGI("video: hilo de decodificacion con %d texturas", vp->nslot);
+    LOGI("startup: video thread running with %d textures", vp->nslot);
     return 0;
 }
 
@@ -844,20 +861,33 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     pl->volume=pp->volume?*pp->volume:100;
     view.cpu_mhz=vt_profile_clock(pp->profile,pp->height,pp->fps);
     err[0] = 0;
-    pthread_mutex_init(&pl->clock.lock, NULL);
+    LOGI("startup: clock mutex begin");
+    int clock_rc = pthread_mutex_init(&pl->clock.lock, NULL);
+    if (clock_rc != 0) {
+        snprintf(err, (size_t)errlen, "Clock mutex error: %d", clock_rc);
+        return -1;
+    }
+    LOGI("startup: clear thumbnail cache");
+    img_clear();
+    img_frame();
+    LOGI("startup: thumbnail cache cleared; open decoder");
 
     if (vdec_open(&vdec, pp->width, pp->height, err, errlen) < 0) {
         pthread_mutex_destroy(&pl->clock.lock);
         return -1;
     }
 
+    LOGI("startup: decoder ready; initialize video queue");
     pq_init(&pl->vq, 900, 24 * 1024 * 1024);
+    LOGI("startup: initialize audio queue");
     pq_init(&pl->aq, 1500, 2 * 1024 * 1024);
+    LOGI("startup: queues ready; start video pipeline");
 
     if (vpipe_start(vp, &vdec, pp, err, errlen) < 0) {
         ret = -1;
         goto out_queues;
     }
+    LOGI("startup: start HLS thread");
     if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq, vt_profile_edge(pp->profile),
                   pp->login,pp->chat_oauth,pp->width,pp->height,pp->fps,pp->ad_backup_url) < 0) {
         snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de descarga"));
@@ -869,6 +899,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         goto out_queues;
     }
 
+    LOGI("startup: HLS thread started; start audio thread");
     pl->audio_running = 1;
     /* audio on core 2: it must never preempt the drawing thread on core 0 */
     pl->audio_thread = sceKernelCreateThread("vt_audio", audio_thread, 100, 64 * 1024, 0,
@@ -887,9 +918,11 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         pl->audio_failed = 1;
     }
 
+    LOGI("startup: audio thread setup done; start chat if enabled");
     if (pp->chat_on && *pp->chat_on && pp->login)
         chat_start(pp->login,pp->chat_nick,pp->chat_oauth);
     img_set_deferred_free(1);
+    LOGI("startup: enter player input/render loop");
 
     ui_input_t input={0};
     ui_input_poll(&input); /* swallow X from quality selector */
@@ -1168,7 +1201,9 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                 draw_max = t_end - t_draw;
         } else if (now_us - last_draw > 100000) {
             /* nothing new: keep the status/chat/OSD alive */
+            if (!last_draw) LOGI("startup: first player draw begin");
             draw_view(cur >= 0 ? &vp->slot[cur] : NULL, &view);
+            if (!last_draw) LOGI("startup: first player draw done");
             last_draw = sceKernelGetProcessTimeWide();
         } else {
             sceKernelDelayThread(2000);
