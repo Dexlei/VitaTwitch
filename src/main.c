@@ -45,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.33-quality-region"
+#define APP_VERSION   "1.33-playfix2"
 
 #define MAX_ITEMS 100
 
@@ -94,7 +94,7 @@ static const char *region_title(void){
     static const char *const labels[]={"Live languages","Idioma de directos","Idioma das lives","Langue des lives","Lingua delle live","Stream-Sprache","Язык трансляций","Bahasa siaran","Wika ng live","Pinulongan sa live","Streamtaal","Język transmisji","Yayın dili","Мова трансляцій","Streams språk","配信言語","방송 언어","直播语言","直播語言"};
     int i=vt_lang_current();return i>=0&&i<19?labels[i]:labels[0];
 }
-static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=0, g_diag=0, g_volume=100, g_remember=1;
+static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=1, g_diag=0, g_volume=100, g_remember=1;
 static unsigned long long g_auth_last_check;
 static int g_touch_manual_scroll = 0;
 
@@ -163,6 +163,7 @@ static void settings_load(void)
     FILE *f = fopen(SETTINGS_FILE, "r");
     if (!f)
         return;
+    int quality_flow=0;
     while (fgets(line, sizeof(line), f)) {
         size_t n = strlen(line);
         while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
@@ -177,6 +178,7 @@ static void settings_load(void)
             vt_lang_set_code(line + 5);
         else if (!strncmp(line,"region=",7)) {for(int i=0;i<REGION_COUNT;i++)if(!strcmp(line+7,region_codes[i])){g_region=i;break;}}
         else if (!strncmp(line, "profile=", 8)) {int p=atoi(line+8);if(p>=0&&p<VT_PROFILE_COUNT)g_profile=p;}
+        else if (!strncmp(line,"quality_flow=",13)) quality_flow=atoi(line+13);
         else if (!strncmp(line, "auto_quality=", 13)) g_auto_quality=atoi(line+13)!=0;
         else if (!strncmp(line, "diag=", 5)) g_diag=atoi(line+5)!=0;
         else if (!strncmp(line, "volume=", 7)) {int v=atoi(line+7);if(v>=0&&v<=100)g_volume=v;}
@@ -185,6 +187,7 @@ static void settings_load(void)
             ui_touch_enable(atoi(line + 6) != 0);
     }
     fclose(f);
+    if(quality_flow<2)g_auto_quality=1;
 }
 
 static void settings_save(void)
@@ -197,7 +200,7 @@ static void settings_save(void)
             g_pref_quality, g_search, g_chat_on,
             vt_lang_code(vt_lang_current()), ui_touch_enabled());
     fprintf(f,"profile=%d\nauto_quality=%d\ndiag=%d\nvolume=%d\nremember=%d\n",g_profile,g_auto_quality,g_diag,g_volume,g_remember);
-    fprintf(f,"region=%s\n",region_codes[g_region]);
+    fprintf(f,"region=%s\nquality_flow=2\n",region_codes[g_region]);
     fclose(f);
 }
 
@@ -738,82 +741,6 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 
 /* ---------------------------------------------------------- quality */
 
-static int quality_modal(const char *display,m3u8_variant_t **list,int n,int fallback)
-{
-    if(!list || n<=0 || n>M3U8_MAX_VARIANTS)return -1;
-    for(int i=0;i<n;i++)if(!list[i])return -1;
-    int sel=0;
-    for(int i=0;i<n;i++)if(list[i]->height==720 && list[i]->fps<40){sel=i;break;}
-    for(int i=0;i<n;i++)if(g_pref_quality[0]&&!strcmp(list[i]->name,g_pref_quality)){sel=i;break;}
-    const int x=210,w=540,row=48,vis=n<6?n:6;
-    const int h=150+vis*row+(fallback?24:0),y=(SCREEN_H-h)/2;
-    const int ly=y+78+(fallback?24:0);
-    int top=0,dirty=1;
-    char name[96];
-    ui_clean_text(display?display:"",name,sizeof(name));
-    LOGI("quality: enter n=%d selected=%d",n,sel);
-    /* Independent screen: no thumbnail decoding, texture eviction, network
-     * requests, background home redraw or common-dialog update in this loop. */
-    vita2d_wait_rendering_done();
-    ui_input_poll(&g_in);
-    for(;;){
-        ui_input_poll(&g_in);
-        unsigned p=g_in.pressed;
-        if(p&(g_btn_back|SCE_CTRL_START)){
-            LOGI("quality: cancelled");
-            return -1;
-        }
-        if(p&g_btn_ok){
-            LOGI("quality: confirmed %d",sel);
-            return sel;
-        }
-        int before=sel;
-        if(p&(SCE_CTRL_UP|SCE_CTRL_LEFT))sel=(sel+n-1)%n;
-        if(p&(SCE_CTRL_DOWN|SCE_CTRL_RIGHT))sel=(sel+1)%n;
-        if(sel<top)top=sel;
-        if(sel>=top+vis)top=sel-vis+1;
-        if(g_in.touch_tap){
-            if(ui_touch_hit(&g_in,x+16,y+h-53,w/2-24,43))return sel;
-            if(ui_touch_hit(&g_in,x+w/2+8,y+h-53,w/2-24,43))return -1;
-            if(g_in.touch_x<x || g_in.touch_x>=x+w ||
-               g_in.touch_y<y || g_in.touch_y>=y+h)return -1;
-            for(int k=0;k<vis && top+k<n;k++){
-                if(ui_touch_hit(&g_in,x+16,ly+k*row,w-32,row-4)){
-                    LOGI("quality: touch confirmed %d",top+k);
-                    return top+k;
-                }
-            }
-        }
-        if(before!=sel)dirty=1;
-        if(!dirty){sceKernelDelayThread(8000);continue;}
-        vita2d_start_drawing();
-        vita2d_clear_screen();
-        vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
-        vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
-        ui_text_fit(x+24,y+33,w-48,C_WHITE,1.12f,name);
-        ui_text(x+24,y+60,C_GREY,0.87f,vt_tr(VT_I_QUALITY));
-        if(fallback)ui_text_fit(x+24,y+83,w-48,C_GREY,0.70f,
-            vt_msg("Este canal no ofrece 480p/720p: se muestran las disponibles."));
-        for(int k=0;k<vis && top+k<n;k++){
-            int i=top+k,ry=ly+k*row;
-            char info[96];
-            vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==sel?C_PURPLE:C_PANEL);
-            ui_text_fit(x+28,ry+29,136,C_WHITE,0.98f,list[i]->name);
-            snprintf(info,sizeof(info),"%dx%d  /  %.0f fps  /  %.1f Mbps",
-                     list[i]->width,list[i]->height,list[i]->fps,list[i]->bandwidth/1e6);
-            ui_text_fit(x+176,ry+29,w-200,i==sel?C_WHITE:C_GREY,0.82f,info);
-        }
-        vita2d_draw_rectangle(x+16,y+h-53,w/2-24,43,C_PANEL2);
-        vita2d_draw_rectangle(x+w/2+8,y+h-53,w/2-24,43,C_PANEL2);
-        ui_hint(x+28,y+h-25,g_ok_name,vt_tr(VT_I_PLAY));
-        ui_hint(x+w/2+20,y+h-25,g_back_name,vt_tr(VT_I_BACK));
-        vita2d_end_drawing();
-        vita2d_swap_buffers();
-        dirty=0;
-        sceKernelDelayThread(8000);
-    }
-}
-
 /* ------------------------------------------------------------- play */
 
 typedef struct {
@@ -832,62 +759,60 @@ static int variants_run(void *arg, volatile int *abort_flag)
     return j->n;
 }
 
-static void play_channel(const char *login, const char *display, const char *title)
+/* Channel opening and manual quality selection are states in main(), never
+ * nested UI loops. The player is entered only after a separate input frame. */
+static variants_job_t play_job;
+static task_t play_task;
+static m3u8_variant_t *play_list[M3U8_MAX_VARIANTS];
+static int play_count,play_sel,play_top,play_fallback;
+static char play_login[64],play_display[96],play_title[256];
+enum { PLAY_IDLE, PLAY_FETCH, PLAY_CANCEL, PLAY_CHOOSE, PLAY_LAUNCH };
+static int play_state;
+static int play_armed;
+
+static void play_channel(const char *login,const char *display,const char *title)
 {
-    static variants_job_t job;
-    static task_t task;
+    if(play_state!=PLAY_IDLE)return;
+    if(!net_connected()){
+        modal_message(vt_msg("Sin conexion"),vt_msg("Conecta la Vita a una red Wi-Fi e intentalo de nuevo."));
+        return;
+    }
+    snprintf(play_login,sizeof(play_login),"%s",login?login:"");
+    ui_clean_text(display&&display[0]?display:play_login,play_display,sizeof(play_display));
+    ui_clean_text(title?title:"",play_title,sizeof(play_title));
+    memset(&play_job,0,sizeof(play_job));
+    snprintf(play_job.login,sizeof(play_job.login),"%s",play_login);
+    snprintf(play_job.oauth,sizeof(play_job.oauth),"%s",g_logged?g_auth.access:"");
+    if(task_start(&play_task,variants_run,&play_job)<0){
+        toast(vt_tr(VT_I_BACK));return;
+    }
+    play_state=PLAY_FETCH;play_armed=0;
+    LOGI("quality flow: fetching %s",play_login);
+}
+
+static void play_selected(void)
+{
     static char err[256];
-    char msg[128], clean_title[200];
-
-    if (!net_connected()) {
-        modal_message(vt_msg("Sin conexion"), vt_msg("Conecta la Vita a una red Wi-Fi e intentalo de nuevo."));
-        return;
-    }
-    memset(&job, 0, sizeof(job));
-    snprintf(job.login, sizeof(job.login), "%s", login);
-    snprintf(job.oauth, sizeof(job.oauth), "%s", g_logged ? g_auth.access : "");
-    snprintf(msg, sizeof(msg), vt_msg("Abriendo %s..."), display && display[0] ? display : login);
-    LOGI("abrir canal %s (%s)", login, g_logged ? "con sesion" : "anonimo");
-    if (run_with_spinner(&task, variants_run, &job, msg) < 0) {
-        LOGI("cancelado por el usuario");
-        return;
-    }
-    for (int i = 0; i < job.n; i++)
-        LOGI("  calidad %s %dx%d %.0f fps %.2f Mbps%s", job.v[i].name, job.v[i].width, job.v[i].height,
-             job.v[i].fps, job.v[i].bandwidth / 1e6, job.v[i].audio_only ? " (solo audio)" : "");
-    if (job.n <= 0) {
-        modal_message(vt_msg("No se pudo abrir el canal"), job.err);
-        return;
-    }
-
-    m3u8_variant_t *list[M3U8_MAX_VARIANTS];
-    int count = 0, fallback = 0;
-    for (int i = 0; i < job.n; i++)
-        if (!job.v[i].audio_only && job.v[i].height > 0 && job.v[i].height <=720)
-            list[count++] = &job.v[i];
-    if (count == 0) {
-        fallback = 1;
-        for (int i = 0; i < job.n; i++)
-            if (!job.v[i].audio_only && job.v[i].height > 0 && job.v[i].height <= 1080)
-                list[count++] = &job.v[i];
-    }
-    if (count == 0) {
-        modal_message(vt_msg("Sin video"), vt_msg("El stream no tiene calidades de video compatibles."));
-        return;
-    }
-
-    int sel = g_auto_quality ? vt_profile_pick(list,count,g_profile) : quality_modal(display && display[0] ? display : login, list, count, fallback);
-    if (sel < 0 || sel >= count)
-        return;
+    /* Keep player/reconnect working data off the small UI stack. */
+    #define job play_job
+    #define task play_task
+    #define list play_list
+    #define count play_count
+    int sel=play_sel;
+    const char *login=play_login,*display=play_display,*title=play_title;
+    if(sel<0||sel>=count){play_state=PLAY_IDLE;return;}
+    play_state=PLAY_IDLE;
     snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", list[sel]->name);
     settings_save();
 
+    char clean_title[200];
     ui_clean_text(title ? title : "", clean_title, sizeof(clean_title));
     player_params_t pp;
     int retries=0, reductions=0, r=0, ad_switched=0;
-    char ad_backup[M3U8_URL_MAX]={0};
+    static char ad_backup[M3U8_URL_MAX];
+    ad_backup[0]=0;
     char wanted[48];
-    m3u8_variant_t previous;
+    static m3u8_variant_t previous;
     for(;;){
     memset(&pp, 0, sizeof(pp));
     pp.url = list[sel]->url;
@@ -912,7 +837,9 @@ static void play_channel(const char *login, const char *display, const char *tit
         LOGI("reproducir %s en %s: %s", login, pp.quality, log_url(pp.url, u, sizeof(u)));
     }
     scePowerSetArmClockFrequency(vt_profile_clock(g_profile,pp.height,pp.fps));
+    LOGI("quality flow: entering player");
     r = player_run(&pp, err, sizeof(err));
+    LOGI("quality flow: player returned %d",r);
     scePowerSetArmClockFrequency(333);
     settings_save();
     if(r==PLAYER_AD_SWITCH && !ad_switched && ad_backup[0]){
@@ -947,7 +874,103 @@ static void play_channel(const char *login, const char *display, const char *tit
         modal_message(vt_msg("Reproduccion detenida"), err);
     /* viewer counts / thumbnails are stale after watching */
     tab_load(g_tab);
+    #undef job
+    #undef task
+    #undef list
+    #undef count
 }
+
+static void quality_draw(void)
+{
+    const int x=210,w=540,row=48,vis=play_count<6?play_count:6;
+    const int h=150+vis*row,y=(SCREEN_H-h)/2,ly=y+78;
+    vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
+    vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
+    ui_text_fit(x+24,y+33,w-48,C_WHITE,1.12f,play_display);
+    ui_text(x+24,y+60,C_GREY,0.87f,vt_tr(VT_I_QUALITY));
+    for(int k=0;k<vis&&play_top+k<play_count;k++){
+        int i=play_top+k,ry=ly+k*row;
+        char info[96];
+        vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==play_sel?C_PURPLE:C_PANEL);
+        ui_text_fit(x+28,ry+29,136,C_WHITE,0.98f,play_list[i]->name);
+        snprintf(info,sizeof(info),"%dx%d / %.0f fps",play_list[i]->width,play_list[i]->height,play_list[i]->fps);
+        ui_text_fit(x+176,ry+29,w-200,C_WHITE,0.82f,info);
+    }
+    vita2d_draw_rectangle(x+16,y+h-53,w/2-24,43,C_PANEL2);
+    vita2d_draw_rectangle(x+w/2+8,y+h-53,w/2-24,43,C_PANEL2);
+    ui_text(x+30,y+h-25,C_WHITE,0.9f,vt_tr(VT_I_PLAY));
+    ui_text(x+w/2+20,y+h-25,C_WHITE,0.9f,vt_tr(VT_I_BACK));
+}
+
+static void play_tick(void)
+{
+    unsigned p=g_in.pressed;
+    if(play_state==PLAY_LAUNCH){
+        play_selected();
+        return;
+    }
+    if(play_state==PLAY_FETCH||play_state==PLAY_CANCEL){
+        if(play_state==PLAY_FETCH && (p&(g_btn_back|SCE_CTRL_START))){
+            task_cancel(&play_task);play_state=PLAY_CANCEL;
+        }
+        if(task_done(&play_task)){
+            if(play_state==PLAY_CANCEL){play_state=PLAY_IDLE;return;}
+            if(play_job.n<=0||play_job.n>M3U8_MAX_VARIANTS){
+                play_state=PLAY_IDLE;toast(play_job.err[0]?play_job.err:vt_msg("No se encontraron calidades en la playlist"));return;
+            }
+            play_count=0;play_fallback=0;
+            for(int i=0;i<play_job.n;i++)
+                if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=720)
+                    play_list[play_count++]=&play_job.v[i];
+            if(!play_count){
+                play_fallback=1;
+                for(int i=0;i<play_job.n;i++)
+                    if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=1080)
+                        play_list[play_count++]=&play_job.v[i];
+            }
+            if(!play_count){play_state=PLAY_IDLE;toast(vt_msg("El stream no tiene calidades de video compatibles."));return;}
+            play_sel=vt_profile_pick(play_list,play_count,g_profile);
+            if(play_sel<0||play_sel>=play_count)play_sel=0;
+            if(!g_auto_quality)
+                for(int i=0;i<play_count;i++)
+                    if(g_pref_quality[0]&&!strcmp(g_pref_quality,play_list[i]->name)){play_sel=i;break;}
+            play_top=play_sel>=6?play_sel-5:0;
+            play_armed=0;
+            play_state=g_auto_quality?PLAY_LAUNCH:PLAY_CHOOSE;
+            LOGI("quality flow: %d variants; state %d",play_count,play_state);
+            return;
+        }
+    }else if(play_state==PLAY_CHOOSE){
+        const int x=210,w=540,row=48,vis=play_count<6?play_count:6;
+        const int h=150+vis*row,y=(SCREEN_H-h)/2,ly=y+78;
+        if(!(g_in.held&(g_btn_ok|g_btn_back))&&!g_in.touch_down)play_armed=1;
+        if(p&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT)){
+            play_state=PLAY_IDLE;LOGI("quality flow: cancelled");return;
+        }
+        if(p&(SCE_CTRL_UP|SCE_CTRL_LEFT))play_sel=(play_sel+play_count-1)%play_count;
+        if(p&(SCE_CTRL_DOWN|SCE_CTRL_RIGHT))play_sel=(play_sel+1)%play_count;
+        if(play_sel<play_top)play_top=play_sel;
+        if(play_sel>=play_top+vis)play_top=play_sel-vis+1;
+        if(play_armed&&(p&g_btn_ok)){play_state=PLAY_LAUNCH;return;}
+        if(play_armed&&g_in.touch_tap){
+            if(ui_touch_hit(&g_in,x+w/2+8,y+h-53,w/2-24,43)){play_state=PLAY_IDLE;return;}
+            if(ui_touch_hit(&g_in,x+16,y+h-53,w/2-24,43)){play_state=PLAY_LAUNCH;return;}
+            for(int k=0;k<vis&&play_top+k<play_count;k++)
+                if(ui_touch_hit(&g_in,x+16,ly+k*row,w-32,row-4)){play_sel=play_top+k;play_state=PLAY_LAUNCH;return;}
+        }
+    }
+    /* Same rendering/swap path as the working main screen, no image-cache
+     * locks, explicit GPU waits or background rendering while choosing. */
+    vita2d_start_drawing();vita2d_clear_screen();
+    if(play_state==PLAY_CHOOSE)quality_draw();
+    else{
+        ui_spinner(SCREEN_W/2,SCREEN_H/2-32,14,C_PURPLE);
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+12,C_WHITE,1.0f,vt_tr(VT_I_LOADING));
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+42,C_GREY,0.85f,play_display);
+    }
+    frame_end();
+}
+
 
 /* ---------------------------------------------------------- account */
 
@@ -1399,6 +1422,11 @@ int main(void)
     unsigned long long last_tick = 0;
     for (;;) {
         ui_input_poll(&g_in);
+        if(play_state!=PLAY_IDLE){
+            sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND);
+            play_tick();
+            continue;
+        }
         auth_update();
         if(g_logged&&!g_auth_checking&&net_connected()&&sceKernelGetProcessTimeWide()-g_auth_last_check>3600000000ULL){
             g_auth_job.a=g_auth;
