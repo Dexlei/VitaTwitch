@@ -45,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.33-netfix2"
+#define APP_VERSION   "1.33-qualityfix1"
 
 #define MAX_ITEMS 100
 
@@ -397,8 +397,21 @@ static void draw_header(void)
     vita2d_draw_rectangle(0, HEADER_H, SCREEN_W, 1, C_PANEL2);
 
     /* logo */
-    ui_round_rect(20, 12, 32, 32, 6, C_PURPLE);
-    ui_text_center(36, 36, C_WHITE, 1.0f, "VT");
+    /* Twitch Glitch mark, scan-converted from the 24x24 brand silhouette.
+     * Draw directly with native rectangles: no texture allocation. */
+    static const unsigned int glitch[24]={
+        0x3fffe0u,0x3ffff0u,0x200078u,0x20007cu,0x20007cu,0x23107cu,0x23107cu,0x23107cu,0x23107cu,0x23107cu,0x20007cu,0x30007cu,0x38007cu,0x1c007cu,0xe007cu,0x7e7fcu,0x3f7fcu,0x1fffcu,0xfffcu,0x7ffcu,0x780u,0x380u,0x180u,0x80u
+    };
+    for(int gy=0;gy<24;gy++){
+        unsigned mask=glitch[gy];
+        for(int gx=0;gx<24;){
+            if(!(mask&(1u<<gx))){gx++;continue;}
+            int end=gx+1;
+            while(end<24&&(mask&(1u<<end)))end++;
+            vita2d_draw_rectangle(20+gx*1.25f,12+gy*1.25f,(end-gx)*1.25f,1.25f,C_PURPLE);
+            gx=end;
+        }
+    }
     ui_text(62, 37, C_WHITE, 1.2f, "VitaTwitch");
 
     /* Fixed TV-style tab geometry: labels cannot collide with account. */
@@ -702,67 +715,79 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 
 /* ---------------------------------------------------------- quality */
 
-static int quality_modal(const char *display, m3u8_variant_t **list, int n, int fallback)
+static int quality_modal(const char *display,m3u8_variant_t **list,int n,int fallback)
 {
-    int sel = -1;
-    for (int i = 0; i < n && sel < 0; i++)
-        if (g_pref_quality[0] && !strcmp(list[i]->name, g_pref_quality))
-            sel = i;
-    for (int i = 0; i < n && sel < 0; i++)
-        if (list[i]->height == 720 && list[i]->fps < 40)
-            sel = i;
-    if (sel < 0)
-        sel = 0;
-
-    const int row_h = 50, w = 520;
-    int vis = n < 5 ? n : 5;
-    int top = 0;
-    char title[96], name[80];
-    ui_clean_text(display, name, sizeof(name));
-    snprintf(title, sizeof(title), "%s", name);
-
-    for (;;) {
+    if(!list || n<=0 || n>M3U8_MAX_VARIANTS)return -1;
+    for(int i=0;i<n;i++)if(!list[i])return -1;
+    int sel=0;
+    for(int i=0;i<n;i++)if(list[i]->height==720 && list[i]->fps<40){sel=i;break;}
+    for(int i=0;i<n;i++)if(g_pref_quality[0]&&!strcmp(list[i]->name,g_pref_quality)){sel=i;break;}
+    const int x=210,w=540,row=48,vis=n<6?n:6;
+    const int h=150+vis*row+(fallback?24:0),y=(SCREEN_H-h)/2;
+    const int ly=y+78+(fallback?24:0);
+    int top=0,dirty=1;
+    char name[96];
+    ui_clean_text(display?display:"",name,sizeof(name));
+    LOGI("quality: enter n=%d selected=%d",n,sel);
+    /* Independent screen: no thumbnail decoding, texture eviction, network
+     * requests, background home redraw or common-dialog update in this loop. */
+    vita2d_wait_rendering_done();
+    ui_input_poll(&g_in);
+    for(;;){
         ui_input_poll(&g_in);
-        if (g_in.pressed & SCE_CTRL_UP) sel = (sel + n - 1) % n;
-        if (g_in.pressed & SCE_CTRL_DOWN) sel = (sel + 1) % n;
-        if (g_in.pressed & g_btn_ok) return sel;
-        if (g_in.pressed & g_btn_back) return -1;
-        if (g_in.touch_tap) {
-            int box_h = 120 + vis * row_h + (fallback ? 26 : 0);
-            int yy = (SCREEN_H-box_h)/2 + 84 + (fallback ? 26 : 0);
-            for (int k=0;k<vis;k++)
-                if (ui_touch_hit(&g_in,(SCREEN_W-w)/2+16,yy+k*row_h,w-32,row_h-6))
+        unsigned p=g_in.pressed;
+        if(p&(g_btn_back|SCE_CTRL_START)){
+            LOGI("quality: cancelled");
+            return -1;
+        }
+        if(p&g_btn_ok){
+            LOGI("quality: confirmed %d",sel);
+            return sel;
+        }
+        int before=sel;
+        if(p&(SCE_CTRL_UP|SCE_CTRL_LEFT))sel=(sel+n-1)%n;
+        if(p&(SCE_CTRL_DOWN|SCE_CTRL_RIGHT))sel=(sel+1)%n;
+        if(sel<top)top=sel;
+        if(sel>=top+vis)top=sel-vis+1;
+        if(g_in.touch_tap){
+            if(ui_touch_hit(&g_in,x+16,y+h-53,w/2-24,43))return sel;
+            if(ui_touch_hit(&g_in,x+w/2+8,y+h-53,w/2-24,43))return -1;
+            if(g_in.touch_x<x || g_in.touch_x>=x+w ||
+               g_in.touch_y<y || g_in.touch_y>=y+h)return -1;
+            for(int k=0;k<vis && top+k<n;k++){
+                if(ui_touch_hit(&g_in,x+16,ly+k*row,w-32,row-4)){
+                    LOGI("quality: touch confirmed %d",top+k);
                     return top+k;
+                }
+            }
         }
-        if (sel < top) top = sel;
-        if (sel >= top + vis) top = sel - vis + 1;
-
-        frame_begin();
-        draw_home();
-        int h = 120 + vis * row_h + (fallback ? 26 : 0);
-        int x, y;
-        draw_modal_box(w, h, &x, &y);
-        ui_text_fit(x + 28, y + 42, w - 56, C_WHITE, 1.15f, title);
-        ui_text(x + 28, y + 68, C_GREY, 0.85f, vt_tr(VT_I_QUALITY));
-        int ly = y + 84;
-        if (fallback) {
-            ui_text(x + 28, ly + 14, C_DIM, 0.75f, vt_msg("Este canal no ofrece 480p/720p: se muestran las disponibles."));
-            ly += 26;
-        }
-        for (int k = 0; k < vis; k++) {
-            int i = top + k;
-            int ry = ly + k * row_h;
+        if(before!=sel)dirty=1;
+        if(!dirty){sceKernelDelayThread(8000);continue;}
+        vita2d_start_drawing();
+        vita2d_clear_screen();
+        vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
+        vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
+        ui_text_fit(x+24,y+33,w-48,C_WHITE,1.12f,name);
+        ui_text(x+24,y+60,C_GREY,0.87f,vt_tr(VT_I_QUALITY));
+        if(fallback)ui_text_fit(x+24,y+83,w-48,C_GREY,0.70f,
+            vt_msg("Este canal no ofrece 480p/720p: se muestran las disponibles."));
+        for(int k=0;k<vis && top+k<n;k++){
+            int i=top+k,ry=ly+k*row;
             char info[96];
-            if (i == sel)
-                ui_round_rect(x + 16, ry, w - 32, row_h - 6, 8, C_PURPLE);
-            ui_text(x + 32, ry + 30, C_WHITE, 1.05f, list[i]->name);
-            snprintf(info, sizeof(info), "%dx%d  -  %.0f fps  -  %.1f Mbps", list[i]->width, list[i]->height,
-                     list[i]->fps, list[i]->bandwidth / 1e6);
-            ui_text(x + 170, ry + 29, i == sel ? C_WHITE : C_GREY, 0.85f, info);
+            vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==sel?C_PURPLE:C_PANEL);
+            ui_text_fit(x+28,ry+29,136,C_WHITE,0.98f,list[i]->name);
+            snprintf(info,sizeof(info),"%dx%d  /  %.0f fps  /  %.1f Mbps",
+                     list[i]->width,list[i]->height,list[i]->fps,list[i]->bandwidth/1e6);
+            ui_text_fit(x+176,ry+29,w-200,i==sel?C_WHITE:C_GREY,0.82f,info);
         }
-        ui_hint(x + 28, y + h - 18, g_ok_name, vt_tr(VT_I_PLAY));
-        ui_hint(x + 200, y + h - 18, g_back_name, vt_tr(VT_I_BACK));
-        frame_end();
+        vita2d_draw_rectangle(x+16,y+h-53,w/2-24,43,C_PANEL2);
+        vita2d_draw_rectangle(x+w/2+8,y+h-53,w/2-24,43,C_PANEL2);
+        ui_hint(x+28,y+h-25,g_ok_name,vt_tr(VT_I_PLAY));
+        ui_hint(x+w/2+20,y+h-25,g_back_name,vt_tr(VT_I_BACK));
+        vita2d_end_drawing();
+        vita2d_swap_buffers();
+        dirty=0;
+        sceKernelDelayThread(8000);
     }
 }
 
@@ -829,7 +854,7 @@ static void play_channel(const char *login, const char *display, const char *tit
     }
 
     int sel = g_auto_quality ? vt_profile_pick(list,count,g_profile) : quality_modal(display && display[0] ? display : login, list, count, fallback);
-    if (sel < 0)
+    if (sel < 0 || sel >= count)
         return;
     snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", list[sel]->name);
     settings_save();
