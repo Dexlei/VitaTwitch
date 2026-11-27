@@ -16,6 +16,6 @@ int main(void) {
   assert(vt_lang_auto(17)==0 && strcmp(vt_lang_code(vt_lang_current()),"pt-BR")==0);
   assert(vt_lang_set_code("invalid")==-1);
   assert(vt_lang_set(19)==-1);
-  printf("PASS: 19 locale catalogs, 28 complete strings, Vita locale and fallback\n");
+  printf("PASS: 19 locale catalogs, 30 complete strings, Vita locale and fallback\n");
   return 0;
 }
