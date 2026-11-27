@@ -764,7 +764,7 @@ static int variants_run(void *arg, volatile int *abort_flag)
 static variants_job_t play_job;
 static task_t play_task;
 static m3u8_variant_t *play_list[M3U8_MAX_VARIANTS];
-static int play_count,play_sel,play_top,play_fallback;
+static int play_count,play_sel,play_top;
 static char play_login[64],play_display[96],play_title[256];
 enum { PLAY_IDLE, PLAY_FETCH, PLAY_CANCEL, PLAY_CHOOSE, PLAY_LAUNCH };
 static int play_state;
@@ -794,15 +794,15 @@ static void play_selected(void)
 {
     static char err[256];
     /* Keep player/reconnect working data off the small UI stack. */
-    #define job play_job
-    #define task play_task
-    #define list play_list
-    #define count play_count
+
+
+
+
     int sel=play_sel;
     const char *login=play_login,*display=play_display,*title=play_title;
-    if(sel<0||sel>=count){play_state=PLAY_IDLE;return;}
+    if(sel<0||sel>=play_count){play_state=PLAY_IDLE;return;}
     play_state=PLAY_IDLE;
-    snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", list[sel]->name);
+    snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", play_list[sel]->name);
     settings_save();
 
     char clean_title[200];
@@ -815,21 +815,21 @@ static void play_selected(void)
     static m3u8_variant_t previous;
     for(;;){
     memset(&pp, 0, sizeof(pp));
-    pp.url = list[sel]->url;
+    pp.url = play_list[sel]->url;
     pp.channel = display && display[0] ? display : login;
     pp.title = clean_title;
-    pp.quality = list[sel]->name;
-    pp.width = list[sel]->width;
-    pp.height = list[sel]->height;
-    pp.fps = (float)list[sel]->fps;
+    pp.quality = play_list[sel]->name;
+    pp.width = play_list[sel]->width;
+    pp.height = play_list[sel]->height;
+    pp.fps = (float)play_list[sel]->fps;
     pp.font = ui_font;
     pp.btn_back = g_btn_back;
-    pp.login = job.login;
+    pp.login = play_job.login;
     pp.chat_nick = g_logged ? g_auth.login : NULL;
     pp.chat_oauth = g_logged ? g_auth.access : NULL;
     pp.chat_on = &g_chat_on;
     pp.profile=g_profile;pp.auto_quality=g_auto_quality;
-    pp.has_lower=vt_profile_lower(list,count,list[sel])>=0;
+    pp.has_lower=vt_profile_lower(play_list,play_count,play_list[sel])>=0;
     pp.diagnostics=g_diag;pp.volume=&g_volume;
     pp.ad_backup_url=ad_switched?NULL:ad_backup;
     {
@@ -844,29 +844,29 @@ static void play_selected(void)
     settings_save();
     if(r==PLAYER_AD_SWITCH && !ad_switched && ad_backup[0]){
         ad_switched=1;
-        snprintf(list[sel]->url,sizeof(list[sel]->url),"%s",ad_backup);
+        snprintf(play_list[sel]->url,sizeof(play_list[sel]->url),"%s",ad_backup);
         LOGI("player: reopening on verified alternate HLS session");
         continue;
     }
     if(r!=PLAYER_RECONNECT&&r!=PLAYER_LOWER_QUALITY)break;
     if(r==PLAYER_RECONNECT&&++retries>2){r=-1;break;}
     if(r==PLAYER_LOWER_QUALITY&&++reductions>4){r=-1;break;}
-    previous=*list[sel];
+    previous=*play_list[sel];
     snprintf(wanted,sizeof(wanted),"%s",previous.name);
     const int lower=(r==PLAYER_LOWER_QUALITY);
-    memset(&job,0,sizeof(job));
-    snprintf(job.login,sizeof(job.login),"%s",login);
-    snprintf(job.oauth,sizeof(job.oauth),"%s",g_logged?g_auth.access:"");
-    if(run_with_spinner(&task,variants_run,&job,vt_opt(lower?VT_O_LOWER:VT_O_RECONNECT))<0){r=0;break;}
-    if(job.n<=0){snprintf(err,sizeof(err),"%s",job.err);r=-1;break;}
-    count=0;
-    for(int i=0;i<job.n;i++)if(!job.v[i].audio_only&&job.v[i].height>0&&job.v[i].height<=720)list[count++]=&job.v[i];
-    if(!count)for(int i=0;i<job.n;i++)if(!job.v[i].audio_only&&job.v[i].height>0&&job.v[i].height<=1080)list[count++]=&job.v[i];
-    if(!count){snprintf(err,sizeof(err),"%s",vt_msg("El stream no tiene calidades de video compatibles."));r=-1;break;}
+    memset(&play_job,0,sizeof(play_job));
+    snprintf(play_job.login,sizeof(play_job.login),"%s",login);
+    snprintf(play_job.oauth,sizeof(play_job.oauth),"%s",g_logged?g_auth.access:"");
+    if(run_with_spinner(&play_task,variants_run,&play_job,vt_opt(lower?VT_O_LOWER:VT_O_RECONNECT))<0){r=0;break;}
+    if(play_job.n<=0){snprintf(err,sizeof(err),"%s",play_job.err);r=-1;break;}
+    play_count=0;
+    for(int i=0;i<play_job.n;i++)if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=720)play_list[play_count++]=&play_job.v[i];
+    if(!play_count)for(int i=0;i<play_job.n;i++)if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=1080)play_list[play_count++]=&play_job.v[i];
+    if(!play_count){snprintf(err,sizeof(err),"%s",vt_msg("El stream no tiene calidades de video compatibles."));r=-1;break;}
     sel=-1;
-    if(lower)sel=vt_profile_lower(list,count,&previous);
-    else for(int i=0;i<count;i++)if(!strcmp(wanted,list[i]->name)){sel=i;break;}
-    if(sel<0&&!lower)sel=vt_profile_pick(list,count,g_profile);
+    if(lower)sel=vt_profile_lower(play_list,play_count,&previous);
+    else for(int i=0;i<play_count;i++)if(!strcmp(wanted,play_list[i]->name)){sel=i;break;}
+    if(sel<0&&!lower)sel=vt_profile_pick(play_list,play_count,g_profile);
     if(sel<0){snprintf(err,sizeof(err),"%s",vt_msg("Reproduccion detenida"));r=-1;break;}
     }
     ui_input_poll(&g_in);
@@ -874,10 +874,10 @@ static void play_selected(void)
         modal_message(vt_msg("Reproduccion detenida"), err);
     /* viewer counts / thumbnails are stale after watching */
     tab_load(g_tab);
-    #undef job
-    #undef task
-    #undef list
-    #undef count
+
+
+
+
 }
 
 static void quality_draw(void)
@@ -918,12 +918,11 @@ static void play_tick(void)
             if(play_job.n<=0||play_job.n>M3U8_MAX_VARIANTS){
                 play_state=PLAY_IDLE;toast(play_job.err[0]?play_job.err:vt_msg("No se encontraron calidades en la playlist"));return;
             }
-            play_count=0;play_fallback=0;
+            play_count=0;
             for(int i=0;i<play_job.n;i++)
                 if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=720)
                     play_list[play_count++]=&play_job.v[i];
             if(!play_count){
-                play_fallback=1;
                 for(int i=0;i<play_job.n;i++)
                     if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=1080)
                         play_list[play_count++]=&play_job.v[i];
@@ -1530,6 +1529,7 @@ int main(void)
         frame_end();
     }
 
+    if(play_state==PLAY_FETCH||play_state==PLAY_CANCEL){task_cancel(&play_task);task_wait(&play_task);}
     for (int t = 0; t < TAB_COUNT; t++)
         if (g_tabs[t].busy) {
             task_cancel(&g_tabs[t].task);
