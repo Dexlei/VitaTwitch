@@ -50,7 +50,7 @@ int twitch_json_escape(const char *s, char *out, size_t cap)
     return (int)n;
 }
 
-int twitch_build_gql_body(const char *login, char *out, size_t cap)
+static int build_gql_profile(const char *login,const char *profile,char *out,size_t cap)
 {
     /* Inline query (no persisted-query hash) so it keeps working when hashes rotate. */
     return snprintf(out, cap,
@@ -58,8 +58,13 @@ int twitch_build_gql_body(const char *login, char *out, size_t cap)
         "\"query\":\"query PlaybackAccessToken_Template($login: String!, $playerType: String!, $platform: String!) "
         "{ streamPlaybackAccessToken(channelName: $login, params: {platform: $platform, playerBackend: \\\"mediaplayer\\\", playerType: $playerType}) "
         "{ value signature __typename } }\","
-        "\"variables\":{\"login\":\"%s\",\"playerType\":\"site\",\"platform\":\"web\"}}",
-        login);
+        "\"variables\":{\"login\":\"%s\",\"playerType\":\"%s\",\"platform\":\"web\"}}",
+        login,profile);
+}
+
+int twitch_build_gql_body(const char *login,char *out,size_t cap)
+{
+    return build_gql_profile(login,"site",out,cap);
 }
 
 #define STREAM_FIELDS \
@@ -370,7 +375,7 @@ int twitch_fetch_list(twitch_list_t kind, const char *query, const char *oauth,
     return n;
 }
 
-int twitch_get_variants(const char *channel, const char *oauth, m3u8_variant_t *out, int max,
+static int get_variants_profile(const char *channel,const char *oauth,const char *profile,m3u8_variant_t *out,int max,
                         char *err, size_t errlen, volatile int *abort_flag)
 {
     char login[64];
@@ -390,7 +395,7 @@ int twitch_get_variants(const char *channel, const char *oauth, m3u8_variant_t *
 
     /* 1) Playback access token through Twitch's GraphQL API. With the user's
      *    OAuth token, subscribers/Turbo users get their ad-free playlist. */
-    twitch_build_gql_body(login, body, sizeof(body));
+    build_gql_profile(login,profile,body,sizeof(body));
     if (twitch_gql(body, oauth, &resp, err, errlen, abort_flag) < 0) {
         /* an expired login must not block anonymous viewing */
         if (!(oauth && oauth[0]) ||
@@ -445,5 +450,51 @@ out:
     buf_free(&resp);
     http_free(c);
     return ret;
+}
+
+int twitch_get_variants(const char *channel,const char *oauth,m3u8_variant_t *out,int max,
+                        char *err,size_t errlen,volatile int *abort_flag)
+{
+    return get_variants_profile(channel,oauth,"site",out,max,err,errlen,abort_flag);
+}
+
+/* Experimental direct fallback: no external proxy; never swap incompatible
+ * renditions. Probe current media, not just the master playlist. The caller
+ * reopens its decoder rather than mixing timestamps from two HLS sessions. */
+int twitch_find_clean_variant(const char *channel,const char *oauth,const char *current,
+                              int width,int height,float fps,char *out,
+                              volatile int *abort_flag)
+{
+    static m3u8_variant_t variants[M3U8_MAX_VARIANTS];
+    static m3u8_media_t media;
+    static const char *profiles[]={"embed","popout"};
+    char err[160];
+    buf_t pl={0};
+    CURL *c=http_new();
+    if(!c)return 0;
+    int found=0;
+    for(int p=0;p<2&&!found&&!*abort_flag;p++){
+        int n=get_variants_profile(channel,oauth,profiles[p],variants,M3U8_MAX_VARIANTS,
+                                   err,sizeof(err),abort_flag);
+        for(int i=0;i<n&&!*abort_flag;i++){
+            const m3u8_variant_t *v=&variants[i];
+            if(v->audio_only||v->width!=width||v->height!=height||
+               (fps>0&&v->fps>0&&(v->fps-fps>1.0f||fps-v->fps>1.0f))||
+               strncmp(v->url,"https://",8)||!strcmp(v->url,current))continue;
+            long status=0;
+            if(http_request(c,v->url,NULL,NULL,&pl,&status,abort_flag)==0&&status==200&&
+               m3u8_parse_media((const char *)pl.data,v->url,&media)==0&&
+               !media.ended&&media.count>=2&&
+               !media.seg[media.count-1].is_ad&&!media.seg[media.count-2].is_ad){
+                snprintf(out,M3U8_URL_MAX,"%s",v->url);
+                found=1;
+                LOGI("hls: alternate clean rendition found (%s)",profiles[p]);
+            }
+            break; /* one compatible rendition per profile */
+        }
+    }
+    buf_free(&pl);
+    http_free(c);
+    return found;
 }
 #endif
