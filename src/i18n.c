@@ -1,12 +1,12 @@
 #include "i18n.h"
 #include <string.h>
-/* Nineteen navigation/menu catalogs; additional messages use explicit locale fallback.
+/* Nineteen complete navigation/menu and extended interface catalogs.
  * UTF-8 labels are data: font glyph availability depends on Vita firmware. */
 typedef struct {const char *code, *name; const char *text[VT_I_COUNT];} lang_t;
 static const lang_t langs[VT_LANG_COUNT] = {
   {"en", "English", {"Following", "Explore", "Search", "LIVE", "Offline", "Menu", "Account", "Language", "Touch", "Chat", "Write", "Log in to send messages", "On", "Off", "Refresh", "Close", "Play", "Quality", "Loading", "Back", "Exit", "Settings", "Clear thumbnails", "About", "Log in", "Log out", "Tab", "Send message", "Show info", "Hide info"}},
   {"es", "Español", {"Siguiendo", "Explorar", "Buscar", "DIRECTO", "Desconectado", "Menú", "Cuenta", "Idioma", "Táctil", "Chat", "Escribir", "Inicia sesión para escribir", "Activado", "Desactivado", "Actualizar", "Cerrar", "Reproducir", "Calidad", "Cargando", "Volver", "Salir", "Ajustes", "Limpiar miniaturas", "Acerca de", "Iniciar sesión", "Cerrar sesión", "Pestaña", "Enviar mensaje", "Mostrar info", "Ocultar info"}},
-  {"pt-BR", "Português (Brasil)", {"Seguindo", "Explorar", "Buscar", "AO VIVO", "Offline", "Menu", "Conta", "Idioma", "Tela sensível ao toque", "Chat", "Escrever", "Entre na conta para enviar mensagens", "Ativado", "Desativado", "Atualizar", "Fechar", "Reproduzir", "Qualidade", "Carregando", "Voltar", "Sair", "Configurações", "Limpar cache", "Sobre", "Entrar na conta", "Sair da conta", "Aba", "Enviar mensagem", "Mostrar informações", "Ocultar informações"}},
+  {"pt-BR", "Português (Brasil)", {"Seguindo", "Explorar", "Buscar", "AO VIVO", "Offline", "Menu", "Conta", "Idioma", "Controle por toque", "Chat", "Escrever", "Entre na conta para enviar mensagens", "Ativado", "Desativado", "Atualizar", "Fechar", "Reproduzir", "Qualidade", "Carregando", "Voltar", "Sair", "Configurações", "Limpar cache", "Sobre", "Entrar na conta", "Sair da conta", "Aba", "Enviar mensagem", "Mostrar informações", "Ocultar informações"}},
   {"fr", "Français", {"Abonnements", "Explorer", "Rechercher", "EN DIRECT", "Hors ligne", "Menu", "Compte", "Langue", "Tactile", "Chat", "Écrire", "Connectez-vous pour écrire", "Activé", "Désactivé", "Actualiser", "Fermer", "Lire", "Qualité", "Chargement", "Retour", "Quitter", "Paramètres", "Vider les vignettes", "À propos", "Connexion", "Déconnexion", "Onglet", "Envoyer un message", "Afficher infos", "Masquer infos"}},
   {"it", "Italiano", {"Seguiti", "Esplora", "Cerca", "IN DIRETTA", "Offline", "Menu", "Account", "Lingua", "Touch", "Chat", "Scrivi", "Accedi per scrivere", "Attivo", "Disattivo", "Aggiorna", "Chiudi", "Riproduci", "Qualità", "Caricamento", "Indietro", "Esci", "Impostazioni", "Pulisci miniature", "Info", "Accedi", "Esci dall'account", "Scheda", "Invia messaggio", "Mostra info", "Nascondi info"}},
   {"de", "Deutsch", {"Gefolgt", "Entdecken", "Suchen", "LIVE", "Offline", "Menü", "Konto", "Sprache", "Touch", "Chat", "Schreiben", "Zum Chatten anmelden", "Ein", "Aus", "Aktualisieren", "Schließen", "Abspielen", "Qualität", "Laden", "Zurück", "Beenden", "Einstellungen", "Vorschaubilder leeren", "Info", "Anmelden", "Abmelden", "Register", "Nachricht senden", "Info anzeigen", "Info ausblenden"}},
@@ -135,7 +135,7 @@ static const struct {const char *source,*en,*pt;} messages[] = {
   {"Stream terminado (HTTP %ld)","Stream unavailable (HTTP %ld)","Transmissão indisponível (HTTP %ld)"},
   {"El directo ha terminado","The live stream has ended","A transmissão ao vivo terminou"},
   {"Chat de %s","%s chat","Chat de %s"},
-  {"Cargando insignias...","Loading badges...","Carregando insígnias..."},
+  {"Cargando insignias...","Loading badges...","Carregando emblemas..."},
   {"Cargando emotes de 7TV...","Loading 7TV emotes...","Carregando emotes do 7TV..."},
   {"Conectado - 7TV: %d emotes del canal","Connected - 7TV: %d channel emotes","Conectado - 7TV: %d emotes do canal"},
   {"Conectado - 7TV: solo globales","Connected - 7TV: global only","Conectado - 7TV: apenas emotes globais"},
@@ -147,12 +147,101 @@ static const struct {const char *source,*en,*pt;} messages[] = {
   {"El chat ha sido borrado por un moderador","Chat cleared by a moderator","O chat foi limpo por um moderador"},
   {"Chat desconectado, reintentando en %d s...","Chat disconnected, retrying in %d s...","Chat desconectado. Reconectando em %d s..."},
 };
+static const char *const ext_0[] = {
+#include "locales/es.inc"
+};
+_Static_assert(sizeof(ext_0)/sizeof(ext_0[0]) == sizeof(messages)/sizeof(messages[0]), "locale es count");
+static const char *const ext_1[] = {
+#include "locales/fr.inc"
+};
+_Static_assert(sizeof(ext_1)/sizeof(ext_1[0]) == sizeof(messages)/sizeof(messages[0]), "locale fr count");
+static const char *const ext_2[] = {
+#include "locales/it.inc"
+};
+_Static_assert(sizeof(ext_2)/sizeof(ext_2[0]) == sizeof(messages)/sizeof(messages[0]), "locale it count");
+static const char *const ext_3[] = {
+#include "locales/de.inc"
+};
+_Static_assert(sizeof(ext_3)/sizeof(ext_3[0]) == sizeof(messages)/sizeof(messages[0]), "locale de count");
+static const char *const ext_4[] = {
+#include "locales/ru.inc"
+};
+_Static_assert(sizeof(ext_4)/sizeof(ext_4[0]) == sizeof(messages)/sizeof(messages[0]), "locale ru count");
+static const char *const ext_5[] = {
+#include "locales/id.inc"
+};
+_Static_assert(sizeof(ext_5)/sizeof(ext_5[0]) == sizeof(messages)/sizeof(messages[0]), "locale id count");
+static const char *const ext_6[] = {
+#include "locales/fil.inc"
+};
+_Static_assert(sizeof(ext_6)/sizeof(ext_6[0]) == sizeof(messages)/sizeof(messages[0]), "locale fil count");
+static const char *const ext_7[] = {
+#include "locales/ceb.inc"
+};
+_Static_assert(sizeof(ext_7)/sizeof(ext_7[0]) == sizeof(messages)/sizeof(messages[0]), "locale ceb count");
+static const char *const ext_8[] = {
+#include "locales/nl.inc"
+};
+_Static_assert(sizeof(ext_8)/sizeof(ext_8[0]) == sizeof(messages)/sizeof(messages[0]), "locale nl count");
+static const char *const ext_9[] = {
+#include "locales/pl.inc"
+};
+_Static_assert(sizeof(ext_9)/sizeof(ext_9[0]) == sizeof(messages)/sizeof(messages[0]), "locale pl count");
+static const char *const ext_10[] = {
+#include "locales/tr.inc"
+};
+_Static_assert(sizeof(ext_10)/sizeof(ext_10[0]) == sizeof(messages)/sizeof(messages[0]), "locale tr count");
+static const char *const ext_11[] = {
+#include "locales/uk.inc"
+};
+_Static_assert(sizeof(ext_11)/sizeof(ext_11[0]) == sizeof(messages)/sizeof(messages[0]), "locale uk count");
+static const char *const ext_12[] = {
+#include "locales/sv.inc"
+};
+_Static_assert(sizeof(ext_12)/sizeof(ext_12[0]) == sizeof(messages)/sizeof(messages[0]), "locale sv count");
+static const char *const ext_13[] = {
+#include "locales/ja.inc"
+};
+_Static_assert(sizeof(ext_13)/sizeof(ext_13[0]) == sizeof(messages)/sizeof(messages[0]), "locale ja count");
+static const char *const ext_14[] = {
+#include "locales/ko.inc"
+};
+_Static_assert(sizeof(ext_14)/sizeof(ext_14[0]) == sizeof(messages)/sizeof(messages[0]), "locale ko count");
+static const char *const ext_15[] = {
+#include "locales/zh-CN.inc"
+};
+_Static_assert(sizeof(ext_15)/sizeof(ext_15[0]) == sizeof(messages)/sizeof(messages[0]), "locale zh-CN count");
+static const char *const ext_16[] = {
+#include "locales/zh-TW.inc"
+};
+_Static_assert(sizeof(ext_16)/sizeof(ext_16[0]) == sizeof(messages)/sizeof(messages[0]), "locale zh-TW count");
+static const char *const *const extended[VT_LANG_COUNT] = {
+  [1]=ext_0,
+  [3]=ext_1,
+  [4]=ext_2,
+  [5]=ext_3,
+  [6]=ext_4,
+  [7]=ext_5,
+  [8]=ext_6,
+  [9]=ext_7,
+  [10]=ext_8,
+  [11]=ext_9,
+  [12]=ext_10,
+  [13]=ext_11,
+  [14]=ext_12,
+  [15]=ext_13,
+  [16]=ext_14,
+  [17]=ext_15,
+  [18]=ext_16,
+};
+size_t vt_msg_count(void) { return sizeof(messages)/sizeof(messages[0]); }
+const char *vt_msg_key(size_t i) { return i<vt_msg_count()?messages[i].source:NULL; }
 const char *vt_msg(const char *source) {
   if(!source)return "";
   for(size_t i=0;i<sizeof(messages)/sizeof(messages[0]);i++){
     if(!strcmp(source,messages[i].source)){
       if(active==2)return messages[i].pt;
-      if(active==1)return messages[i].source;
+      if(extended[active])return extended[active][i];
       return messages[i].en;
     }
   }

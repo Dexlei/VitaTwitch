@@ -42,5 +42,7 @@ int vt_lang_auto(int system_language);
 const char *vt_lang_code(int index);
 const char *vt_lang_name(int index);
 const char *vt_tr(vt_text_id key);
+size_t vt_msg_count(void);
+const char *vt_msg_key(size_t i);
 const char *vt_msg(const char *source);
 #endif

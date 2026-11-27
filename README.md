@@ -2,7 +2,7 @@
 
 ### Experimental localization and stability patch
 
-Portuguese (Brazil), English and Spanish now cover the additional interface, playback, chat and network messages through a common catalog. Other languages retain their original menu translations and use English for additional untranslated messages. Server-provided messages and debug logs are not translated. UTF-8 keyboard titles are converted to UTF-16. HTTPS and IRC now require the bundled CA store; missing or invalid certificates stop connections. HTTP error bodies are no longer logged. HLS shutdown waits for the worker, and queue byte limits are enforced. Hardware and CI verification required; this is not a release. OAuth storage, ABR, VODs, clips, audio-only and the remaining feature roadmap are not implemented in this patch.
+All 19 languages now have 30 core and 97 additional interface, playback, chat and network messages. The extended catalogs are checked for count and matching format placeholders. Native speaker review and on-device font/layout verification remain necessary. Server-provided messages and debug logs are not translated. UTF-8 keyboard titles are converted to UTF-16. HTTPS and IRC now require the bundled CA store; missing or invalid certificates stop connections. HTTP error bodies are no longer logged. HLS shutdown waits for the worker, and queue byte limits are enforced. Hardware and CI verification required; this is not a release. OAuth storage, ABR, VODs, clips, audio-only and the remaining feature roadmap are not implemented in this patch.
 
 
 ## Experimental 1.33 branch: 19 languages, SELECT extras, touch and writable chat
@@ -19,8 +19,7 @@ The original hardware H.264/AAC playback, Twitch authentication, TS/fMP4 and
   Turkish, Ukrainian, Swedish, Japanese, Korean, simplified Chinese and
   traditional Chinese. The system language is detected at startup and can be
   overridden in SELECT > Language; stored as `lang=<code>` in settings.txt.
-  The 30 core UI strings are translated in all 19 catalogs. Some **legacy
-  network error/status messages remain in Spanish** until separately reviewed.
+  All 30 core and 97 extended UI messages are translated in all 19 catalogs.
   PS Vita default PGF fonts may lack glyphs for CJK/Indic scripts; UI text may
   need alternate fonts. This is a limitation, not a claim of complete glyph
   rendering.
@@ -222,7 +221,7 @@ reduce a 640 px de ancho). La preferencia se guarda (`chat=1` en `settings.txt`)
 ## Limitaciones conocidas
 
 - Nada de esta versión se ha probado aún en una Vita real (solo en PC: red, parsers, demuxer).
-- TLS sin verificación de certificado (la Vita no tiene CAs actuales; NetStream hace lo mismo).
+- TLS requiere el paquete de certificados CA incluido en el VPK experimental.
 - 720p60 depende de que el decodificador aguante 60 fps; si se descartan muchos frames, usa 720p.
 - Chat solo de lectura; sin VODs ni clips todavía.
 
