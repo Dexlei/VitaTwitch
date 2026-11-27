@@ -45,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.33-dev"
+#define APP_VERSION   "1.33-netfix1"
 
 #define MAX_ITEMS 100
 
@@ -455,8 +455,11 @@ static void draw_center_msg(const char *title, const char *msg, int top)
 {
     int cy = top + (FOOTER_Y - top) / 2;
     ui_text_center(SCREEN_W / 2, cy - 10, C_WHITE, 1.15f, title);
-    if (msg)
-        ui_text_center(SCREEN_W / 2, cy + 22, C_GREY, 0.9f, msg);
+    if (msg) {
+        int w=ui_text_w(0.9f,msg);
+        if(w>SCREEN_W-48)w=SCREEN_W-48;
+        ui_text_fit((SCREEN_W-w)/2,cy+22,w,C_GREY,0.9f,msg);
+    }
 }
 
 static void draw_home(void)
