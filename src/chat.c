@@ -664,8 +664,18 @@ static int chat_thread(SceSize args, void *argp)
             curl_easy_setopt(c, CURLOPT_URL, "https://irc.chat.twitch.tv:6697");
             curl_easy_setopt(c, CURLOPT_CONNECT_ONLY, 1L);
             curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
-            curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-            curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+            if(C.oauth[0]){
+                /* Never expose OAuth tokens over unverified TLS. If the
+                 * packaged CA bundle is absent/invalid, connect anonymously
+                 * after a failed verified handshake (read-only mode). */
+                curl_easy_setopt(c, CURLOPT_CAINFO, "app0:ca/cacert.pem");
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+            }else{
+                /* Existing anonymous read-only mode has no credentials. */
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+            }
             curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, abort_cb);
             curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
             CURLcode r = curl_easy_perform(c);
@@ -684,7 +694,17 @@ static int chat_thread(SceSize args, void *argp)
                 }
                 ok = irc_send(c,hello)==0;
             } else if (!C.stop) {
-                LOGE("chat: no se pudo conectar (curl %d: %s)", (int)r, curl_easy_strerror(r));
+                if(C.oauth[0]) {
+                    /* A failure to verify must NOT trigger plaintext
+                     * credential transmission or any insecure retry. */
+                    pthread_mutex_lock(&C.lock);
+                    C.oauth[0]=0;C.nick[0]=0;C.ready=0;C.queued=0;
+                    pthread_mutex_unlock(&C.lock);
+                    set_status("Secure chat TLS unavailable; anonymous read-only");
+                    LOGW("chat: secure OAuth connection unavailable (curl %d), falling back to anonymous", (int)r);
+                }else{
+                    LOGE("chat: no se pudo conectar (curl %d: %s)", (int)r, curl_easy_strerror(r));
+                }
             }
         }
 
