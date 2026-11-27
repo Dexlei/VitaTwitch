@@ -14,6 +14,11 @@ int main(void) {
   assert(vt_lang_set_code("pt-BR")==0);
   assert(strcmp(vt_tr(VT_I_FOLLOWING),"Seguindo")==0);
   assert(vt_lang_auto(17)==0 && strcmp(vt_lang_code(vt_lang_current()),"pt-BR")==0);
+  assert(strcmp(vt_msg("Cargando..."),"Carregando...")==0);
+  assert(strcmp(vt_msg("No se pudo cargar"),"Não foi possível carregar")==0);
+  assert(strcmp(vt_msg("Message empty or too long"),"Mensagem vazia ou longa demais.")==0);
+  assert(vt_lang_set_code("fr")==0);
+  assert(strcmp(vt_msg("Cargando..."),"Loading...")==0);
   assert(vt_lang_set_code("invalid")==-1);
   assert(vt_lang_set(19)==-1);
   printf("PASS: 19 locale catalogs, 30 complete strings, Vita locale and fallback\n");

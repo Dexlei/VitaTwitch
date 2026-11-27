@@ -1,3 +1,4 @@
+#include "i18n.h"
 /*
  * Live HLS downloader: polls the media playlist, downloads new MPEG-TS
  * segments, demuxes them and pushes elementary-stream packets to the
@@ -79,7 +80,7 @@ static int hls_thread(SceSize args, void *argp)
     long status;
 
     if (!c) {
-        snprintf(h->error, sizeof(h->error), "No se pudo iniciar curl");
+        snprintf(h->error, sizeof(h->error), vt_msg("No se pudo iniciar curl"));
         h->finished = 1;
         return sceKernelExitDeleteThread(0);
     }
@@ -91,11 +92,11 @@ static int hls_thread(SceSize args, void *argp)
                 break;
             LOGW("hls: fallo al leer la playlist (HTTP %ld, intento %d)", status, fails + 1);
             if (++fails >= 8 || status == 404 || status == 403) {
-                snprintf(h->error, sizeof(h->error), "Stream terminado (HTTP %ld)", status);
+                snprintf(h->error, sizeof(h->error), vt_msg("Stream terminado (HTTP %ld)"), status);
                 LOGE("hls: %s", h->error);
                 break;
             }
-            sleep_ms_while_running(h, 1000);
+            sleep_ms_while_running(h, (fails > 4 ? 4 : fails) * 1000);
             continue;
         }
         fails = 0;
@@ -180,7 +181,7 @@ static int hls_thread(SceSize args, void *argp)
         }
 
         if (media.ended) {
-            snprintf(h->error, sizeof(h->error), "El directo ha terminado");
+            snprintf(h->error, sizeof(h->error), vt_msg("El directo ha terminado"));
             LOGI("hls: la playlist indica fin del directo");
             break;
         }
@@ -209,10 +210,19 @@ int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq)
     h->thread = sceKernelCreateThread("vt_hls", hls_thread, 0x10000100, 512 * 1024, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
     if (h->thread < 0) {
         h->running = 0;
+        ts_demux_free(&h->demux);
+        mp4_demux_free(&h->mp4);
         return -1;
     }
     hls_t *self = h;
-    sceKernelStartThread(h->thread, sizeof(self), &self);
+    if (sceKernelStartThread(h->thread, sizeof(self), &self) < 0) {
+        sceKernelDeleteThread(h->thread);
+        h->thread = -1;
+        h->running = 0;
+        ts_demux_free(&h->demux);
+        mp4_demux_free(&h->mp4);
+        return -1;
+    }
     return 0;
 }
 
@@ -220,14 +230,10 @@ void hls_stop(hls_t *h)
 {
     h->running = 0;
     h->abort_req = 1;
+    pq_abort(h->vq);
+    pq_abort(h->aq);
     if (h->thread >= 0) {
-        /* curl's timeout is 20 s, so the thread always ends within that; leaving
-         * earlier would free the demuxer under a running thread. */
-        SceUInt timeout = 25 * 1000 * 1000;
-        while (!h->finished && timeout > 0) {
-            sceKernelDelayThread(10000);
-            timeout -= 10000;
-        }
+        while (!h->finished) sceKernelDelayThread(10000);
     }
     ts_demux_free(&h->demux);
     mp4_demux_free(&h->mp4);

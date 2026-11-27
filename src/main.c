@@ -215,7 +215,7 @@ static void tab_load(int t)
     }
     if (!net_connected()) {
         tb->state = LS_ERROR;
-        snprintf(tb->err, sizeof(tb->err), "Sin conexion a Internet. Conectate a una red Wi-Fi.");
+        snprintf(tb->err, sizeof(tb->err), vt_msg("Sin conexion a Internet. Conectate a una red Wi-Fi."));
         LOGW("%s: sin Wi-Fi", tab_name(t));
         return;
     }
@@ -356,7 +356,7 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
         ui_round_rect(x + 8, y + 8, 64, 22, 4, C_RED);
         ui_text_center(x + 40, y + 25, C_WHITE, 0.75f, vt_tr(VT_I_LIVE));
         ui_fmt_viewers(s->viewers, v, sizeof(v));
-        snprintf(line, sizeof(line), "%s espectadores", v);
+        snprintf(line, sizeof(line), vt_msg("%s espectadores"), v);
         int w = ui_text_w(0.75f, line) + 16;
         ui_round_rect(x + 8, y + THUMB_H - 30, w, 22, 4, C_SHADE);
         ui_text(x + 16, y + THUMB_H - 13, C_WHITE, 0.75f, line);
@@ -430,7 +430,7 @@ static void draw_footer(void)
     x += ui_hint(x, y, g_ok_name, ok);
     x += ui_hint(x, y, "\xE2\x96\xB3" /* triangle */, vt_tr(VT_I_REFRESH));
     if (g_tab == TAB_SEARCH)
-        x += ui_hint(x, y, "\xE2\x96\xA1" /* square */, "Ir al canal exacto");
+        x += ui_hint(x, y, "\xE2\x96\xA1" /* square */, vt_msg("Ir al canal exacto"));
     x += ui_hint(x, y, "L/R", vt_tr(VT_I_TAB));
     x += ui_hint(x, y, "SELECT", vt_tr(VT_I_MENU));
     ui_hint(x, y, "START", vt_tr(VT_I_EXIT));
@@ -492,19 +492,19 @@ static void draw_home(void)
             draw_card(&tb->items[i], x, y, i == tb->sel);
         }
     } else if (tb->need_login) {
-        draw_center_msg("Inicia sesion para ver los canales que sigues",
-                        "Pulsa SELECT y sigue las instrucciones (no hace falta escribir la contrasena en la Vita)", top);
+        draw_center_msg(vt_msg("Inicia sesion para ver los canales que sigues"),
+                        vt_msg("Pulsa SELECT y sigue las instrucciones (no hace falta escribir la contrasena en la Vita)"), top);
     } else if (tb->state == LS_LOADING) {
         ui_spinner(SCREEN_W / 2, top + (FOOTER_Y - top) / 2 - 10, 16, C_PURPLE);
     } else if (tb->state == LS_ERROR) {
-        draw_center_msg("No se pudo cargar", tb->err, top);
+        draw_center_msg(vt_msg("No se pudo cargar"), tb->err, top);
     } else if (g_tab == TAB_SEARCH && !g_search[0]) {
-        snprintf(buf, sizeof(buf), "Pulsa %s para buscar un canal por nombre", g_ok_name);
-        draw_center_msg("Busca canales de Twitch", buf, top);
+        snprintf(buf, sizeof(buf), vt_msg("Pulsa %s para buscar un canal por nombre"), g_ok_name);
+        draw_center_msg(vt_msg("Busca canales de Twitch"), buf, top);
     } else if (tb->state == LS_READY) {
-        draw_center_msg(g_tab == TAB_FOLLOWED ? "Ninguno de tus canales esta en directo" :
-                        g_tab == TAB_SEARCH ? "Sin resultados" : "No hay directos",
-                        "Pulsa Triangulo para actualizar", top);
+        draw_center_msg(g_tab == TAB_FOLLOWED ? vt_msg("Ninguno de tus canales esta en directo") :
+                        g_tab == TAB_SEARCH ? vt_msg("Sin resultados") : vt_msg("No hay directos"),
+                        vt_msg("Pulsa Triangulo para actualizar"), top);
     }
 
     /* search bar */
@@ -579,7 +579,7 @@ static void wrap_text(int x, int y, int max_w, unsigned color, float scale, cons
 static void modal_message(const char *title, const char *msg)
 {
     char hint[32];
-    snprintf(hint, sizeof(hint), "Aceptar");
+    snprintf(hint, sizeof(hint), vt_msg("Aceptar"));
     LOGE("mensaje en pantalla: %s: %s", title, msg);
     for (;;) {
         ui_input_poll(&g_in);
@@ -621,7 +621,7 @@ static int run_with_spinner(task_t *t, task_fn fn, void *arg, const char *msg)
         draw_modal_box(460, 150, &x, &y);
         ui_spinner(x + 50, y + 62, 14, C_PURPLE);
         ui_text_fit(x + 84, y + 70, 460 - 110, C_WHITE, 1.0f, msg);
-        ui_hint(x + 460 - 130, y + 150 - 20, g_back_name, "Cancelar");
+        ui_hint(x + 460 - 130, y + 150 - 20, g_back_name, vt_msg("Cancelar"));
         frame_end();
     }
 }
@@ -629,14 +629,8 @@ static int run_with_spinner(task_t *t, task_fn fn, void *arg, const char *msg)
 static int ime_input(const char *title, const char *initial, char *out, size_t cap, int max_len)
 {
     static SceWChar16 title16[64], init16[128], buf16[128];
-    size_t i;
-
-    for (i = 0; title[i] && i < 63; i++)
-        title16[i] = (unsigned char)title[i];
-    title16[i] = 0;
-    for (i = 0; initial[i] && i < 127; i++)
-        init16[i] = (unsigned char)initial[i];
-    init16[i] = 0;
+    vt_utf8_to_utf16((uint16_t*)title16,64,title);
+    vt_utf8_to_utf16((uint16_t*)init16,128,initial);
     memset(buf16, 0, sizeof(buf16));
 
     SceImeDialogParam param;
@@ -734,7 +728,7 @@ static int quality_modal(const char *display, m3u8_variant_t **list, int n, int 
         ui_text(x + 28, y + 68, C_GREY, 0.85f, vt_tr(VT_I_QUALITY));
         int ly = y + 84;
         if (fallback) {
-            ui_text(x + 28, ly + 14, C_DIM, 0.75f, "Este canal no ofrece 480p/720p: se muestran las disponibles.");
+            ui_text(x + 28, ly + 14, C_DIM, 0.75f, vt_msg("Este canal no ofrece 480p/720p: se muestran las disponibles."));
             ly += 26;
         }
         for (int k = 0; k < vis; k++) {
@@ -780,13 +774,13 @@ static void play_channel(const char *login, const char *display, const char *tit
     char msg[128], clean_title[200];
 
     if (!net_connected()) {
-        modal_message("Sin conexion", "Conecta la Vita a una red Wi-Fi e intentalo de nuevo.");
+        modal_message(vt_msg("Sin conexion"), vt_msg("Conecta la Vita a una red Wi-Fi e intentalo de nuevo."));
         return;
     }
     memset(&job, 0, sizeof(job));
     snprintf(job.login, sizeof(job.login), "%s", login);
     snprintf(job.oauth, sizeof(job.oauth), "%s", g_logged ? g_auth.access : "");
-    snprintf(msg, sizeof(msg), "Abriendo %s...", display && display[0] ? display : login);
+    snprintf(msg, sizeof(msg), vt_msg("Abriendo %s..."), display && display[0] ? display : login);
     LOGI("abrir canal %s (%s)", login, g_logged ? "con sesion" : "anonimo");
     if (run_with_spinner(&task, variants_run, &job, msg) < 0) {
         LOGI("cancelado por el usuario");
@@ -796,7 +790,7 @@ static void play_channel(const char *login, const char *display, const char *tit
         LOGI("  calidad %s %dx%d %.0f fps %.2f Mbps%s", job.v[i].name, job.v[i].width, job.v[i].height,
              job.v[i].fps, job.v[i].bandwidth / 1e6, job.v[i].audio_only ? " (solo audio)" : "");
     if (job.n <= 0) {
-        modal_message("No se pudo abrir el canal", job.err);
+        modal_message(vt_msg("No se pudo abrir el canal"), job.err);
         return;
     }
 
@@ -812,7 +806,7 @@ static void play_channel(const char *login, const char *display, const char *tit
                 list[count++] = &job.v[i];
     }
     if (count == 0) {
-        modal_message("Sin video", "El stream no tiene calidades de video compatibles.");
+        modal_message(vt_msg("Sin video"), vt_msg("El stream no tiene calidades de video compatibles."));
         return;
     }
 
@@ -848,7 +842,7 @@ static void play_channel(const char *login, const char *display, const char *tit
         settings_save();
     ui_input_poll(&g_in);
     if (r < 0)
-        modal_message("Reproduccion detenida", err);
+        modal_message(vt_msg("Reproduccion detenida"), err);
     /* viewer counts / thumbnails are stale after watching */
     tab_load(g_tab);
 }
@@ -894,7 +888,7 @@ static void account_logged_in(void)
             sceIoRemove(AUTH_FILE);
             g_tabs[TAB_FOLLOWED].count = 0;
             tab_load(TAB_FOLLOWED);
-            toast("Has cerrado sesion");
+            toast(vt_msg("Has cerrado sesion"));
             return;
         }
         frame_begin();
@@ -906,9 +900,9 @@ static void account_logged_in(void)
         char at[48];
         snprintf(at, sizeof(at), "@%s", g_auth.login);
         ui_text(x + 120, y + 94, C_GREY, 0.9f, at);
-        ui_text(x + 28, y + 150, C_GREY, 0.85f, "Sesion iniciada: Siguiendo y anuncios segun tu cuenta.");
-        ui_hint(x + 28, y + 196, "\xE2\x96\xB3", "Cerrar sesion");
-        ui_hint(x + 260, y + 196, g_back_name, "Volver");
+        ui_text(x + 28, y + 150, C_GREY, 0.85f, vt_msg("Sesion iniciada: Siguiendo y anuncios segun tu cuenta."));
+        ui_hint(x + 28, y + 196, "\xE2\x96\xB3", vt_msg("Cerrar sesion"));
+        ui_hint(x + 260, y + 196, g_back_name, vt_msg("Volver"));
         frame_end();
     }
 }
@@ -919,17 +913,17 @@ static void account_login(void)
     static task_t task;
 
     if (!net_connected()) {
-        modal_message("Sin conexion", "Conecta la Vita a una red Wi-Fi para iniciar sesion.");
+        modal_message(vt_msg("Sin conexion"), vt_msg("Conecta la Vita a una red Wi-Fi para iniciar sesion."));
         return;
     }
     memset(&job, 0, sizeof(job));
     LOGI("login: pidiendo codigo de dispositivo");
-    if (run_with_spinner(&task, login_start_run, &job, "Pidiendo un codigo a Twitch...") < 0)
+    if (run_with_spinner(&task, login_start_run, &job, vt_msg("Pidiendo un codigo a Twitch...")) < 0)
         return;
     if (task.result >= 0)
         LOGI("login: codigo recibido, caduca en %d s, consulta cada %d s", job.dev.expires_in, job.dev.interval);
     if (task.result < 0) {
-        modal_message("No se pudo iniciar sesion", job.err);
+        modal_message(vt_msg("No se pudo iniciar sesion"), job.err);
         return;
     }
 
@@ -966,14 +960,14 @@ static void account_login(void)
                 auth_save(&g_auth, AUTH_FILE);
                 char hi[96], name[80];
                 ui_clean_text(g_auth.display, name, sizeof(name));
-                snprintf(hi, sizeof(hi), "Hola, %s", name);
+                snprintf(hi, sizeof(hi), vt_msg("Hola, %s"), name);
                 toast(hi);
                 g_tab = TAB_FOLLOWED;
                 tab_load(TAB_FOLLOWED);
                 return;
             }
             if (r < 0) {
-                modal_message("No se pudo iniciar sesion", job.err);
+                modal_message(vt_msg("No se pudo iniciar sesion"), job.err);
                 return;
             }
             if (r == AUTH_SLOW_DOWN)
@@ -982,7 +976,7 @@ static void account_login(void)
         }
         if (!polling && now >= next_poll) {
             if (now >= expires) {
-                modal_message("Codigo caducado", "El codigo ha caducado. Pulsa SELECT para pedir otro.");
+                modal_message(vt_msg("Codigo caducado"), vt_msg("El codigo ha caducado. Pulsa SELECT para pedir otro."));
                 return;
             }
             if (task_start(&task, login_poll_run, &job) == 0)
@@ -993,19 +987,19 @@ static void account_login(void)
         draw_home();
         int x, y, w = 640, h = 330;
         draw_modal_box(w, h, &x, &y);
-        ui_text(x + 32, y + 50, C_WHITE, 1.3f, "Iniciar sesion en Twitch");
-        ui_text(x + 32, y + 92, C_GREY, 0.95f, "1. En tu movil o PC abre:");
+        ui_text(x + 32, y + 50, C_WHITE, 1.3f, vt_msg("Iniciar sesion en Twitch"));
+        ui_text(x + 32, y + 92, C_GREY, 0.95f, vt_msg("1. En tu movil o PC abre:"));
         ui_text(x + 60, y + 128, C_PURPLE, 1.4f, "twitch.tv/activate");
-        ui_text(x + 32, y + 168, C_GREY, 0.95f, "2. Inicia sesion e introduce este codigo:");
+        ui_text(x + 32, y + 168, C_GREY, 0.95f, vt_msg("2. Inicia sesion e introduce este codigo:"));
         ui_round_rect(x + 60, y + 184, 300, 64, 10, C_PANEL2);
         ui_text_center(x + 210, y + 230, C_WHITE, 2.0f, code);
         ui_spinner(x + 400, y + 216, 10, C_PURPLE);
-        ui_text(x + 422, y + 222, C_GREY, 0.85f, "Esperando...");
+        ui_text(x + 422, y + 222, C_GREY, 0.85f, vt_msg("Esperando..."));
         unsigned long long left = expires > now ? (expires - now) / 1000000ULL : 0;
         char t[64];
-        snprintf(t, sizeof(t), "El codigo caduca en %llu:%02llu", left / 60, left % 60);
+        snprintf(t, sizeof(t), vt_msg("El codigo caduca en %llu:%02llu"), left / 60, left % 60);
         ui_text(x + 32, y + h - 50, C_DIM, 0.8f, t);
-        ui_hint(x + w - 150, y + h - 22, g_back_name, "Cancelar");
+        ui_hint(x + w - 150, y + h - 22, g_back_name, vt_msg("Cancelar"));
         frame_end();
     }
 }
@@ -1057,7 +1051,7 @@ static void language_screen(void)
             if(i==sel) ui_round_rect(x+12,y+60+k*row,w-24,row-3,6,C_PURPLE);
             ui_text_fit(x+30,y+90+k*row,w-60,C_WHITE,0.94f,vt_lang_name(i));
         }
-        ui_text(x+24,y+h-13,C_GREY,0.7f,"Up/Down  |  X  |  Back");
+        ui_text(x+24,y+h-13,C_GREY,0.7f,vt_msg("Up/Down  |  X  |  Back"));
         frame_end();
     }
 }
@@ -1083,8 +1077,8 @@ static void extras_menu(void)
                 case 1: language_screen();break;
                 case 2: ui_touch_enable(!ui_touch_enabled());settings_save();break;
                 case 3: g_chat_on=!g_chat_on;settings_save();break;
-                case 4: img_clear();toast("Thumbnail cache cleared");break;
-                case 5: modal_message("VitaTwitch", "19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork.");break;
+                case 4: img_clear();toast(vt_msg("Thumbnail cache cleared"));break;
+                case 5: modal_message("VitaTwitch", vt_msg("19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork."));break;
                 case 6:return;
             }
         }
@@ -1200,7 +1194,7 @@ static void open_selected(void)
     tab_t *tb = &g_tabs[g_tab];
     if (g_tab == TAB_SEARCH && tb->sel < 0) {
         char q[64];
-        if (ime_input("Buscar canal", g_search, q, sizeof(q), 40) && q[0]) {
+        if (ime_input(vt_msg("Buscar canal"), g_search, q, sizeof(q), 40) && q[0]) {
             snprintf(g_search, sizeof(g_search), "%s", q);
             settings_save();
             tb->count = 0;
@@ -1302,7 +1296,7 @@ int main(void)
             if (twitch_sanitize_login(g_search, login, sizeof(login)) >= 3)
                 play_channel(login, login, NULL);
             else
-                toast("Ese nombre no es un canal valido");
+                toast(vt_msg("Ese nombre no es un canal valido"));
             continue;
         }
 

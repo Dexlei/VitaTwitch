@@ -43,9 +43,13 @@ CURL *http_new(void)
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 20L);
     curl_easy_setopt(c, CURLOPT_BUFFERSIZE, 64L * 1024L);
-    /* The Vita has no up-to-date CA store; NetStream also skips verification. */
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(c, CURLOPT_CAINFO, "app0:ca/cacert.pem");
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(c, CURLOPT_PROTOCOLS, (long)CURLPROTO_HTTPS);
+    curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, (long)CURLPROTO_HTTPS);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 8L);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, progress_cb);
     curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
@@ -94,9 +98,7 @@ int http_request(CURL *c, const char *url, const char *post_body,
             LOGE("%s %s -> curl %d (%s) tras %llu ms", m, log_url(url, u, sizeof(u)), (int)res,
                  curl_easy_strerror(res), ms);
     } else if (*status >= 400 && !(out->data && strstr((const char *)out->data, "authorization_pending"))) {
-        /* error bodies (GQL / usher / oauth) explain the reason; never contain secrets */
-        LOGE("%s %s -> HTTP %ld (%llu ms): %.200s", m, log_url(url, u, sizeof(u)), *status, ms,
-             out->data ? (const char *)out->data : "");
+        LOGE("%s %s -> HTTP %ld (%llu ms)", m, log_url(url, u, sizeof(u)), *status, ms);
     } else if (ms > 4000) {
         LOGW("%s %s lenta: %llu ms, %u bytes", m, log_url(url, u, sizeof(u)), ms, (unsigned)out->size);
     }

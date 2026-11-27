@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           gcc -DVT_NO_NET -std=gnu11 -Wall -Wextra -Isrc \
-            tests/chat_send_test.c src/chat.c src/json.c src/text.c src/log.c \
+            tests/chat_send_test.c src/chat.c src/json.c src/text.c src/log.c src/i18n.c \
             -o /tmp/vt-chat-send-test
           /tmp/vt-chat-send-test
       - name: Verify Vita source wiring without altering original player codecs

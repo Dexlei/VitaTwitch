@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "chat.h"
 #include "json.h"
 #include "log.h"
@@ -595,7 +596,7 @@ static void load_badges(const char *room_id)
     for (const char *p = room_id; *p; p++)
         if (*p < '0' || *p > '9')
             return; /* room-id is numeric */
-    set_status("Cargando insignias...");
+    set_status(vt_msg("Cargando insignias..."));
     if (twitch_gql(global_q, NULL, &b, err, sizeof(err), &C.stop) == 0)
         g = chat_load_badges((const char *)b.data);
     snprintf(body, sizeof(body),
@@ -617,7 +618,7 @@ static void load_7tv(const char *room_id)
 
     if (!c)
         return;
-    set_status("Cargando emotes de 7TV...");
+    set_status(vt_msg("Cargando emotes de 7TV..."));
     if (http_request(c, "https://7tv.io/v3/emote-sets/global", NULL, NULL, &b, &status, &C.stop) == 0 && status == 200) {
         int n = chat_load_7tv((const char *)b.data);
         if (n > 0) total += n;
@@ -636,9 +637,9 @@ static void load_7tv(const char *room_id)
     buf_free(&b);
     http_free(c);
     if (chan > 0)
-        set_status("Conectado - 7TV: %d emotes del canal", chan);
+        set_status(vt_msg("Conectado - 7TV: %d emotes del canal"), chan);
     else
-        set_status(total > 0 ? "Conectado - 7TV: solo globales" : "Conectado");
+        set_status(total > 0 ? vt_msg("Conectado - 7TV: solo globales") : vt_msg("Conectado"));
 }
 
 static int abort_cb(void *p, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d)
@@ -657,7 +658,7 @@ static int chat_thread(SceSize args, void *argp)
     (void)args; (void)argp;
 
     while (C.running) {
-        set_status("Conectando al chat...");
+        set_status(vt_msg("Conectando al chat..."));
         CURL *c = curl_easy_init();
         int ok = 0;
         if (c) {
@@ -673,8 +674,9 @@ static int chat_thread(SceSize args, void *argp)
                 curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
             }else{
                 /* Existing anonymous read-only mode has no credentials. */
-                curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-                curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+                curl_easy_setopt(c, CURLOPT_CAINFO, "app0:ca/cacert.pem");
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
             }
             curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, abort_cb);
             curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
@@ -700,7 +702,7 @@ static int chat_thread(SceSize args, void *argp)
                     pthread_mutex_lock(&C.lock);
                     C.oauth[0]=0;C.nick[0]=0;C.ready=0;C.queued=0;
                     pthread_mutex_unlock(&C.lock);
-                    set_status("Secure chat TLS unavailable; anonymous read-only");
+                    set_status(vt_msg("Secure chat TLS unavailable; anonymous read-only"));
                     LOGW("chat: secure OAuth connection unavailable (curl %d), falling back to anonymous", (int)r);
                 }else{
                     LOGE("chat: no se pudo conectar (curl %d: %s)", (int)r, curl_easy_strerror(r));
@@ -731,7 +733,7 @@ static int chat_thread(SceSize args, void *argp)
                 char packet[600];
                 int used=snprintf(packet,sizeof(packet),"PRIVMSG #%s :%s\r\n",C.login,outgoing);
                 if(used<=0||(size_t)used>=sizeof(packet)||irc_send(c,packet)<0){
-                    set_status("Failed to send chat message");
+                    set_status(vt_msg("Failed to send chat message"));
                     ok=0;break;
                 }
             }
@@ -777,14 +779,14 @@ static int chat_thread(SceSize args, void *argp)
                         if (!room_id[0])
                             irc_tag(&line, "room-id", room_id, sizeof(room_id));
                     } else if (!strcmp(line.command, "JOIN")) {
-                        set_status("Conectado");
+                        set_status(vt_msg("Conectado"));
                         LOGI("chat: conectado a #%s", C.login);
-                        push_system("Conectado al chat");
+                        push_system(vt_msg("Conectado al chat"));
                     } else if (!strcmp(line.command, "RECONNECT")) {
                         LOGI("chat: el servidor pide reconectar");
                         ok = 0;
                     } else if (!strcmp(line.command, "CLEARCHAT") && !line.has_trailing) {
-                        push_system("El chat ha sido borrado por un moderador");
+                        push_system(vt_msg("El chat ha sido borrado por un moderador"));
                     } else if (!strcmp(line.command, "NOTICE")) {
                         if(strstr(line.trailing,"authentication failed")||
                            strstr(line.trailing,"Improperly formatted auth")){
@@ -815,7 +817,7 @@ static int chat_thread(SceSize args, void *argp)
         pthread_mutex_unlock(&C.lock);
         if (!C.running)
             break;
-        set_status("Chat desconectado, reintentando en %d s...", backoff);
+        set_status(vt_msg("Chat desconectado, reintentando en %d s..."), backoff);
         for (int i = 0; i < backoff * 10 && C.running; i++)
             sceKernelDelayThread(100000);
         if (backoff < 30)
@@ -866,7 +868,7 @@ void chat_start(const char *login,const char *nick,const char *oauth_token)
         snprintf(C.nick,sizeof(C.nick),"%s",nick);
         snprintf(C.oauth,sizeof(C.oauth),"%s",oauth_token);
     }
-    snprintf(C.status, sizeof(C.status), "Conectando al chat...");
+    snprintf(C.status, sizeof(C.status), vt_msg("Conectando al chat..."));
     C.running = 1;
     C.stop = 0;
     C.alive = 1;

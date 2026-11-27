@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "twitch.h"
 #include "json.h"
 #include "log.h"
@@ -158,7 +159,7 @@ int twitch_parse_list(const char *json, twitch_list_t kind, twitch_stream_t *out
     char gerr[160];
 
     if (!root) {
-        snprintf(err, errlen, "Respuesta de Twitch no valida");
+        snprintf(err, errlen, vt_msg("Respuesta de Twitch no valida"));
         return -1;
     }
     /* GraphQL may return errors next to valid data (e.g. one broken stream in
@@ -171,7 +172,7 @@ int twitch_parse_list(const char *json, twitch_list_t kind, twitch_stream_t *out
     case TW_LIST_FOLLOWED: {
         json_t *cu = json_path(root, "data.currentUser");
         if ((!cu || cu->type != JSON_OBJECT) && !gql_err) {
-            snprintf(err, errlen, "Sesion caducada: vuelve a iniciar sesion");
+            snprintf(err, errlen, vt_msg("Sesion caducada: vuelve a iniciar sesion"));
             json_free(root);
             return -2;
         }
@@ -186,7 +187,7 @@ int twitch_parse_list(const char *json, twitch_list_t kind, twitch_stream_t *out
         break;
     }
     if (!edges || edges->type != JSON_ARRAY) {
-        snprintf(err, errlen, "Twitch: %s", gql_err ? gql_err : "respuesta sin lista");
+        snprintf(err, errlen, vt_msg("Twitch: %s"), gql_err ? gql_err : vt_msg("respuesta sin lista"));
         json_free(root);
         return -1;
     }
@@ -232,7 +233,7 @@ int twitch_parse_follows(const char *json, twitch_stream_t *out, int max, int *n
     json_t *root = json_parse(json);
     *has_next = 0;
     if (!root) {
-        snprintf(err, errlen, "Respuesta de Twitch no valida");
+        snprintf(err, errlen, vt_msg("Respuesta de Twitch no valida"));
         return -1;
     }
     const char *gql_err = gql_error_text(root, gerr, sizeof(gerr));
@@ -240,13 +241,13 @@ int twitch_parse_follows(const char *json, twitch_stream_t *out, int max, int *n
         LOGW("gql follows: %s", gql_err);
     json_t *cu = json_path(root, "data.currentUser");
     if ((!cu || cu->type != JSON_OBJECT) && !gql_err) {
-        snprintf(err, errlen, "Sesion caducada: vuelve a iniciar sesion");
+        snprintf(err, errlen, vt_msg("Sesion caducada: vuelve a iniciar sesion"));
         json_free(root);
         return -2;
     }
     json_t *edges = json_path(cu, "follows.edges");
     if (!edges || edges->type != JSON_ARRAY) {
-        snprintf(err, errlen, "Twitch: %s", gql_err ? gql_err : "respuesta sin lista");
+        snprintf(err, errlen, vt_msg("Twitch: %s"), gql_err ? gql_err : vt_msg("respuesta sin lista"));
         json_free(root);
         return -1;
     }
@@ -289,7 +290,7 @@ int twitch_gql(const char *body, const char *oauth, buf_t *resp,
     CURL *c = http_new();
 
     if (!c) {
-        snprintf(err, errlen, "No se pudo iniciar curl");
+        snprintf(err, errlen, vt_msg("No se pudo iniciar curl"));
         return -1;
     }
     hdr = curl_slist_append(hdr, "Client-ID: " TWITCH_CLIENT_ID);
@@ -299,11 +300,11 @@ int twitch_gql(const char *body, const char *oauth, buf_t *resp,
         hdr = curl_slist_append(hdr, auth);
     }
     if (http_request(c, "https://gql.twitch.tv/gql", body, hdr, resp, &status, abort_flag) < 0)
-        snprintf(err, errlen, "Error de red al contactar con Twitch");
+        snprintf(err, errlen, vt_msg("Error de red al contactar con Twitch"));
     else if (status == 401)
-        snprintf(err, errlen, "Sesion caducada: vuelve a iniciar sesion");
+        snprintf(err, errlen, vt_msg("Sesion caducada: vuelve a iniciar sesion"));
     else if (status != 200)
-        snprintf(err, errlen, "gql.twitch.tv respondio HTTP %ld", status);
+        snprintf(err, errlen, vt_msg("gql.twitch.tv respondio HTTP %ld"), status);
     else
         ret = 0;
     curl_slist_free_all(hdr);
@@ -323,15 +324,15 @@ int twitch_fetch_list(twitch_list_t kind, const char *query, const char *oauth,
     static int followed_broken;
 
     if (kind == TW_LIST_FOLLOWED && (!oauth || !oauth[0])) {
-        snprintf(err, errlen, "Inicia sesion para ver tus canales seguidos");
+        snprintf(err, errlen, vt_msg("Inicia sesion para ver tus canales seguidos"));
         return -2;
     }
     if (kind == TW_LIST_FOLLOWED && followed_broken) {
         n = -1;
-        snprintf(err, errlen, "fallo antes en esta sesion");
+        snprintf(err, errlen, vt_msg("fallo antes en esta sesion"));
     } else {
         if (twitch_build_list_body(kind, query, body, sizeof(body)) < 0) {
-            snprintf(err, errlen, "Busqueda demasiado larga");
+            snprintf(err, errlen, vt_msg("Busqueda demasiado larga"));
             return -1;
         }
         if (twitch_gql(body, oauth, &resp, err, errlen, abort_flag) < 0) {
@@ -383,7 +384,7 @@ int twitch_get_variants(const char *channel, const char *oauth, m3u8_variant_t *
     CURL *c = NULL;
 
     if (twitch_sanitize_login(channel, login, sizeof(login)) == 0) {
-        snprintf(err, errlen, "Nombre de canal no valido");
+        snprintf(err, errlen, vt_msg("Nombre de canal no valido"));
         return -1;
     }
 
@@ -397,13 +398,13 @@ int twitch_get_variants(const char *channel, const char *oauth, m3u8_variant_t *
             goto out;
     }
     if (twitch_parse_token((const char *)resp.data, token, sizeof(token), sig, sizeof(sig)) < 0) {
-        snprintf(err, errlen, "El canal '%s' no existe", login);
+        snprintf(err, errlen, vt_msg("El canal '%s' no existe"), login);
         goto out;
     }
 
     c = http_new();
     if (!c) {
-        snprintf(err, errlen, "No se pudo iniciar curl");
+        snprintf(err, errlen, vt_msg("No se pudo iniciar curl"));
         goto out;
     }
 
@@ -418,25 +419,25 @@ int twitch_get_variants(const char *channel, const char *oauth, m3u8_variant_t *
     curl_free(etoken);
 
     if (http_request(c, url, NULL, NULL, &resp, &status, abort_flag) < 0) {
-        snprintf(err, errlen, "Error de red al contactar usher.ttvnw.net");
+        snprintf(err, errlen, vt_msg("Error de red al contactar usher.ttvnw.net"));
         goto out;
     }
     if (status == 404) {
-        snprintf(err, errlen, "'%s' no esta en directo", login);
+        snprintf(err, errlen, vt_msg("'%s' no esta en directo"), login);
         goto out;
     }
     if (status == 403) {
-        snprintf(err, errlen, "Twitch no permite ver este canal (bloqueo regional o solo suscriptores)");
+        snprintf(err, errlen, vt_msg("Twitch no permite ver este canal (bloqueo regional o solo suscriptores)"));
         goto out;
     }
     if (status != 200) {
-        snprintf(err, errlen, "usher respondio HTTP %ld", status);
+        snprintf(err, errlen, vt_msg("usher respondio HTTP %ld"), status);
         goto out;
     }
 
     ret = m3u8_parse_master((const char *)resp.data, out, max);
     if (ret <= 0) {
-        snprintf(err, errlen, "No se encontraron calidades en la playlist");
+        snprintf(err, errlen, vt_msg("No se encontraron calidades en la playlist"));
         ret = -1;
     }
 

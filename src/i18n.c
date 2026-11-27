@@ -1,13 +1,12 @@
 #include "i18n.h"
 #include <string.h>
-/* Nineteen translated navigation/menu/chat strings; legacy errors may still
- * appear in Spanish until the complete diagnostic UI is localized.
+/* Nineteen navigation/menu catalogs; additional messages use explicit locale fallback.
  * UTF-8 labels are data: font glyph availability depends on Vita firmware. */
 typedef struct {const char *code, *name; const char *text[VT_I_COUNT];} lang_t;
 static const lang_t langs[VT_LANG_COUNT] = {
   {"en", "English", {"Following", "Explore", "Search", "LIVE", "Offline", "Menu", "Account", "Language", "Touch", "Chat", "Write", "Log in to send messages", "On", "Off", "Refresh", "Close", "Play", "Quality", "Loading", "Back", "Exit", "Settings", "Clear thumbnails", "About", "Log in", "Log out", "Tab", "Send message", "Show info", "Hide info"}},
   {"es", "Español", {"Siguiendo", "Explorar", "Buscar", "DIRECTO", "Desconectado", "Menú", "Cuenta", "Idioma", "Táctil", "Chat", "Escribir", "Inicia sesión para escribir", "Activado", "Desactivado", "Actualizar", "Cerrar", "Reproducir", "Calidad", "Cargando", "Volver", "Salir", "Ajustes", "Limpiar miniaturas", "Acerca de", "Iniciar sesión", "Cerrar sesión", "Pestaña", "Enviar mensaje", "Mostrar info", "Ocultar info"}},
-  {"pt-BR", "Português (Brasil)", {"Seguindo", "Explorar", "Buscar", "AO VIVO", "Offline", "Menu", "Conta", "Idioma", "Toque", "Chat", "Escrever", "Entre na conta para enviar", "Ativado", "Desativado", "Atualizar", "Fechar", "Reproduzir", "Qualidade", "Carregando", "Voltar", "Sair", "Configurações", "Limpar miniaturas", "Sobre", "Entrar", "Sair da conta", "Aba", "Enviar mensagem", "Mostrar informações", "Ocultar informações"}},
+  {"pt-BR", "Português (Brasil)", {"Seguindo", "Explorar", "Buscar", "AO VIVO", "Offline", "Menu", "Conta", "Idioma", "Tela sensível ao toque", "Chat", "Escrever", "Entre na conta para enviar mensagens", "Ativado", "Desativado", "Atualizar", "Fechar", "Reproduzir", "Qualidade", "Carregando", "Voltar", "Sair", "Configurações", "Limpar cache", "Sobre", "Entrar na conta", "Sair da conta", "Aba", "Enviar mensagem", "Mostrar informações", "Ocultar informações"}},
   {"fr", "Français", {"Abonnements", "Explorer", "Rechercher", "EN DIRECT", "Hors ligne", "Menu", "Compte", "Langue", "Tactile", "Chat", "Écrire", "Connectez-vous pour écrire", "Activé", "Désactivé", "Actualiser", "Fermer", "Lire", "Qualité", "Chargement", "Retour", "Quitter", "Paramètres", "Vider les vignettes", "À propos", "Connexion", "Déconnexion", "Onglet", "Envoyer un message", "Afficher infos", "Masquer infos"}},
   {"it", "Italiano", {"Seguiti", "Esplora", "Cerca", "IN DIRETTA", "Offline", "Menu", "Account", "Lingua", "Touch", "Chat", "Scrivi", "Accedi per scrivere", "Attivo", "Disattivo", "Aggiorna", "Chiudi", "Riproduci", "Qualità", "Caricamento", "Indietro", "Esci", "Impostazioni", "Pulisci miniature", "Info", "Accedi", "Esci dall'account", "Scheda", "Invia messaggio", "Mostra info", "Nascondi info"}},
   {"de", "Deutsch", {"Gefolgt", "Entdecken", "Suchen", "LIVE", "Offline", "Menü", "Konto", "Sprache", "Touch", "Chat", "Schreiben", "Zum Chatten anmelden", "Ein", "Aus", "Aktualisieren", "Schließen", "Abspielen", "Qualität", "Laden", "Zurück", "Beenden", "Einstellungen", "Vorschaubilder leeren", "Info", "Anmelden", "Abmelden", "Register", "Nachricht senden", "Info anzeigen", "Info ausblenden"}},
@@ -25,7 +24,7 @@ static const lang_t langs[VT_LANG_COUNT] = {
   {"zh-CN", "Chinese Simplified (简体中文)", {"关注", "发现", "搜索", "直播", "离线", "菜单", "账户", "语言", "触摸", "聊天", "输入", "登录后才能发送", "开启", "关闭", "刷新", "关闭", "播放", "画质", "加载中", "返回", "退出", "设置", "清理缩略图", "关于", "登录", "退出登录", "标签", "发送消息", "显示信息", "隐藏信息"}},
   {"zh-TW", "Chinese Traditional (繁體中文)", {"追蹤", "探索", "搜尋", "直播", "離線", "選單", "帳戶", "語言", "觸控", "聊天", "輸入", "登入後才能傳送", "開啟", "關閉", "重新整理", "關閉", "播放", "畫質", "載入中", "返回", "退出", "設定", "清除縮圖", "關於", "登入", "登出", "分頁", "傳送訊息", "顯示資訊", "隱藏資訊"}},
 };
-static int active = 1; /* existing default: Spanish */
+static int active = 0; /* English until system locale is selected */
 int vt_lang_current(void) {return active;}
 int vt_lang_set(int index) {if(index<0||index>=VT_LANG_COUNT)return -1;active=index;return 0;}
 int vt_lang_set_code(const char *code) {
@@ -46,4 +45,116 @@ int vt_lang_auto(int sys) {
   const int mapping[]={15,0,3,1,5,4,10,2,6,16,18,17,0,14,0,0,11,2,0,12};
   if(sys<0||sys>=(int)(sizeof(mapping)/sizeof(mapping[0])))return -1;
   return vt_lang_set(mapping[sys]);
+}
+
+/* Legacy source keys are stable; never use Spanish as an implicit fallback. */
+static const struct {const char *source,*en,*pt;} messages[] = {
+  {"Sin conexion a Internet. Conectate a una red Wi-Fi.","No internet connection. Connect to Wi-Fi.","Sem conexão com a internet. Conecte-se a uma rede Wi-Fi."},
+  {"%s espectadores","%s viewers","%s espectadores"},
+  {"Ir al canal exacto","Open exact channel","Abrir canal pelo nome"},
+  {"Inicia sesion para ver los canales que sigues","Log in to see followed channels","Entre na sua conta para ver os canais que você segue"},
+  {"Pulsa SELECT y sigue las instrucciones (no hace falta escribir la contrasena en la Vita)","Press SELECT and follow the instructions. No password needed on Vita.","Pressione SELECT e siga as instruções. Não é preciso digitar a senha no Vita."},
+  {"No se pudo cargar","Unable to load","Não foi possível carregar"},
+  {"Pulsa %s para buscar un canal por nombre","Press %s to search by channel name","Pressione %s para buscar um canal pelo nome"},
+  {"Busca canales de Twitch","Search Twitch channels","Buscar canais da Twitch"},
+  {"Ninguno de tus canales esta en directo","None of your followed channels are live","Nenhum canal que você segue está ao vivo"},
+  {"Sin resultados","No results","Nenhum resultado"},
+  {"No hay directos","No live streams","Nenhuma transmissão ao vivo"},
+  {"Pulsa Triangulo para actualizar","Press Triangle to refresh","Pressione Triângulo para atualizar"},
+  {"Aceptar","OK","Confirmar"},
+  {"Cancelar","Cancel","Cancelar"},
+  {"Este canal no ofrece 480p/720p: se muestran las disponibles.","480p/720p unavailable; showing available qualities.","Este canal não oferece 480p/720p. Exibindo as qualidades disponíveis."},
+  {"Sin conexion","No connection","Sem conexão"},
+  {"Conecta la Vita a una red Wi-Fi e intentalo de nuevo.","Connect to Wi-Fi and try again.","Conecte o Vita a uma rede Wi-Fi e tente novamente."},
+  {"Abriendo %s...","Opening %s...","Abrindo %s..."},
+  {"No se pudo abrir el canal","Unable to open channel","Não foi possível abrir o canal"},
+  {"Sin video","No video","Sem vídeo"},
+  {"El stream no tiene calidades de video compatibles.","No compatible video qualities.","Não há qualidades de vídeo compatíveis."},
+  {"Reproduccion detenida","Playback stopped","Reprodução interrompida"},
+  {"Has cerrado sesion","Logged out","Você saiu da conta"},
+  {"Sesion iniciada: Siguiendo y anuncios segun tu cuenta.","Signed in. Follows and ads depend on your account.","Sessão iniciada. Canais seguidos e anúncios conforme sua conta."},
+  {"Cerrar sesion","Log out","Sair da conta"},
+  {"Volver","Back","Voltar"},
+  {"Conecta la Vita a una red Wi-Fi para iniciar sesion.","Connect to Wi-Fi to log in.","Conecte o Vita ao Wi-Fi para entrar na conta."},
+  {"Pidiendo un codigo a Twitch...","Requesting Twitch code...","Solicitando código à Twitch..."},
+  {"No se pudo iniciar sesion","Unable to log in","Não foi possível entrar na conta"},
+  {"Hola, %s","Hello, %s","Olá, %s"},
+  {"Codigo caducado","Code expired","Código expirado"},
+  {"El codigo ha caducado. Pulsa SELECT para pedir otro.","Code expired. Press SELECT for another.","O código expirou. Pressione SELECT para solicitar outro."},
+  {"Iniciar sesion en Twitch","Log in to Twitch","Entrar na Twitch"},
+  {"1. En tu movil o PC abre:","1. On your phone or PC, open:","1. No celular ou computador, acesse:"},
+  {"2. Inicia sesion e introduce este codigo:","2. Log in and enter this code:","2. Entre na sua conta e digite este código:"},
+  {"Esperando...","Waiting...","Aguardando..."},
+  {"El codigo caduca en %llu:%02llu","Code expires in %llu:%02llu","O código expira em %llu:%02llu"},
+  {"Up/Down  |  X  |  Back","Up/Down  |  X  |  Back","Cima/Baixo  |  X  |  Voltar"},
+  {"Thumbnail cache cleared","Thumbnail cache cleared","Cache de miniaturas limpo"},
+  {"19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork.","19 languages, touch, Twitch chat and hardware video. Independent fork.","19 idiomas, controles por toque, chat da Twitch e vídeo por hardware. Fork independente."},
+  {"Buscar canal","Search channel","Buscar canal"},
+  {"Ese nombre no es un canal valido","Invalid channel name","Nome de canal inválido"},
+  {"No se pudo iniciar el decodificador H.264 (0x%08X)","Unable to start H.264 decoder (0x%08X)","Não foi possível iniciar o decodificador H.264 (0x%08X)"},
+  {"Error del decodificador H.264 (0x%08X)","H.264 decoder error (0x%08X)","Erro no decodificador H.264 (0x%08X)"},
+  {"Sin memoria para las texturas de video","Not enough video texture memory","Memória insuficiente para as texturas de vídeo"},
+  {"No se pudo crear el hilo de video","Unable to start video thread","Não foi possível iniciar o processamento de vídeo"},
+  {"DIRECTO","LIVE","AO VIVO"},
+  {"%s   buffer %.1f s   descartados %d","%s   buffer %.1f s   dropped %d","%s   buffer %.1f s   descartados %d"},
+  {"O: salir    Triangulo: info    Cuadrado: chat","O: exit    Triangle: info    Square: chat","O: sair    Triângulo: info    Quadrado: chat"},
+  {"X: salir    Triangulo: info    Cuadrado: chat","X: exit    Triangle: info    Square: chat","X: sair    Triângulo: info    Quadrado: chat"},
+  {"No se pudo crear el hilo de descarga","Unable to start download thread","Não foi possível iniciar o download"},
+  {"Message queued (server confirmation pending)","Message queued (server confirmation pending)","Mensagem na fila. Aguardando confirmação do servidor."},
+  {"Please slow down (chat rate limit)","Please slow down (chat rate limit)","Aguarde antes de enviar outra mensagem."},
+  {"Message empty or too long","Message empty or too long","Mensagem vazia ou longa demais."},
+  {"Cannot open PS Vita keyboard","Cannot open PS Vita keyboard","Não foi possível abrir o teclado do PS Vita."},
+  {"El stream ha terminado","The stream has ended","A transmissão terminou"},
+  {"Anuncio de Twitch: saltando...","Twitch ad: waiting for stream...","Anúncio da Twitch: aguardando a transmissão..."},
+  {"Cargando...","Loading...","Carregando..."},
+  {"Twitch rechazo el inicio de sesion: %s","Twitch rejected login: %s","A Twitch recusou o login: %s"},
+  {"respuesta no valida","invalid response","resposta inválida"},
+  {"El codigo ha caducado. Vuelve a intentarlo.","The code expired. Try again.","O código expirou. Tente novamente."},
+  {"Has rechazado el acceso en Twitch.","You denied access on Twitch.","Você negou o acesso na Twitch."},
+  {"Error de Twitch: %s","Twitch error: %s","Erro da Twitch: %s"},
+  {"Error de red al contactar id.twitch.tv","Network error contacting id.twitch.tv","Erro de rede ao acessar id.twitch.tv"},
+  {"La sesion ha caducado. Vuelve a iniciar sesion.","Session expired. Log in again.","A sessão expirou. Entre na conta novamente."},
+  {"No se pudo comprobar la sesion (sin conexion?)","Unable to verify session. Check connection.","Não foi possível verificar a sessão. Confira a conexão."},
+  {"Respuesta de Twitch no valida","Invalid Twitch response","Resposta inválida da Twitch"},
+  {"Sesion caducada: vuelve a iniciar sesion","Session expired: log in again","Sessão expirada: entre novamente"},
+  {"Twitch: %s","Twitch: %s","Twitch: %s"},
+  {"respuesta sin lista","response without list","resposta sem lista de canais"},
+  {"No se pudo iniciar curl","Unable to initialize network client","Não foi possível iniciar a conexão de rede"},
+  {"Error de red al contactar con Twitch","Network error contacting Twitch","Erro de rede ao acessar a Twitch"},
+  {"gql.twitch.tv respondio HTTP %ld","gql.twitch.tv returned HTTP %ld","gql.twitch.tv retornou HTTP %ld"},
+  {"Inicia sesion para ver tus canales seguidos","Log in to view followed channels","Entre na conta para ver os canais que você segue"},
+  {"fallo antes en esta sesion","Earlier failure in this session","Falha anterior nesta sessão"},
+  {"Busqueda demasiado larga","Search too long","Busca longa demais"},
+  {"Nombre de canal no valido","Invalid channel name","Nome de canal inválido"},
+  {"El canal '%s' no existe","Channel '%s' does not exist","O canal '%s' não existe"},
+  {"Error de red al contactar usher.ttvnw.net","Network error contacting usher.ttvnw.net","Erro de rede ao acessar usher.ttvnw.net"},
+  {"'%s' no esta en directo","'%s' is not live","'%s' não está ao vivo"},
+  {"Twitch no permite ver este canal (bloqueo regional o solo suscriptores)","Twitch restricts this channel (region or subscribers only)","A Twitch restringe este canal (região ou apenas inscritos)"},
+  {"usher respondio HTTP %ld","usher returned HTTP %ld","usher retornou HTTP %ld"},
+  {"No se encontraron calidades en la playlist","No qualities found in playlist","Nenhuma qualidade encontrada na lista de reprodução"},
+  {"Stream terminado (HTTP %ld)","Stream unavailable (HTTP %ld)","Transmissão indisponível (HTTP %ld)"},
+  {"El directo ha terminado","The live stream has ended","A transmissão ao vivo terminou"},
+  {"Chat de %s","%s chat","Chat de %s"},
+  {"Cargando insignias...","Loading badges...","Carregando insígnias..."},
+  {"Cargando emotes de 7TV...","Loading 7TV emotes...","Carregando emotes do 7TV..."},
+  {"Conectado - 7TV: %d emotes del canal","Connected - 7TV: %d channel emotes","Conectado - 7TV: %d emotes do canal"},
+  {"Conectado - 7TV: solo globales","Connected - 7TV: global only","Conectado - 7TV: apenas emotes globais"},
+  {"Conectado","Connected","Conectado"},
+  {"Conectando al chat...","Connecting to chat...","Conectando ao chat..."},
+  {"Secure chat TLS unavailable; anonymous read-only","Secure chat unavailable; read-only","Conexão segura indisponível; chat somente para leitura"},
+  {"Failed to send chat message","Failed to send chat message","Falha ao enviar mensagem"},
+  {"Conectado al chat","Connected to chat","Conectado ao chat"},
+  {"El chat ha sido borrado por un moderador","Chat cleared by a moderator","O chat foi limpo por um moderador"},
+  {"Chat desconectado, reintentando en %d s...","Chat disconnected, retrying in %d s...","Chat desconectado. Reconectando em %d s..."},
+};
+const char *vt_msg(const char *source) {
+  if(!source)return "";
+  for(size_t i=0;i<sizeof(messages)/sizeof(messages[0]);i++){
+    if(!strcmp(source,messages[i].source)){
+      if(active==2)return messages[i].pt;
+      if(active==1)return messages[i].source;
+      return messages[i].en;
+    }
+  }
+  return source;
 }

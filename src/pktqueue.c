@@ -5,6 +5,7 @@
 
 packet_t *pkt_new(const uint8_t *data, int size, int64_t pts, int64_t dts)
 {
+    if (!data || size <= 0) return NULL;
     packet_t *p = malloc(sizeof(*p));
     if (!p)
         return NULL;
@@ -67,13 +68,15 @@ void pq_abort(pktqueue_t *q)
 
 int pq_put(pktqueue_t *q, packet_t *p)
 {
+    if (!p) return -1;
+    if ((size_t)p->size > q->max_bytes) { pkt_free(p); return -1; }
     for (;;) {
         if (q->aborted) {
             pkt_free(p);
             return -1;
         }
         pthread_mutex_lock(&q->lock);
-        if (q->count < q->max_count && q->bytes < q->max_bytes) {
+        if (q->count < q->max_count && (size_t)p->size <= q->max_bytes - q->bytes) {
             p->next = NULL;
             if (q->tail)
                 q->tail->next = p;
@@ -117,7 +120,10 @@ packet_t *pq_get(pktqueue_t *q, int timeout_ms)
 
 int pq_count(pktqueue_t *q)
 {
-    return q->count;
+    pthread_mutex_lock(&q->lock);
+    int n = q->count;
+    pthread_mutex_unlock(&q->lock);
+    return n;
 }
 
 int64_t pq_span(pktqueue_t *q)

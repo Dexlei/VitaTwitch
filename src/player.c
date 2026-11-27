@@ -349,7 +349,7 @@ static int vdec_open(vdec_t *v, int w, int h, char *err, int errlen)
         v->lib_init = 0;
     }
     if (!v->created) {
-        snprintf(err, (size_t)errlen, "No se pudo iniciar el decodificador H.264 (0x%08X)", (unsigned)ret);
+        snprintf(err, (size_t)errlen, vt_msg("No se pudo iniciar el decodificador H.264 (0x%08X)"), (unsigned)ret);
         LOGE("video: %s, %dx%d", err, v->w, v->h);
         vdec_close(v);
         return -1;
@@ -561,7 +561,7 @@ static int vdec_thread(SceSize args, void *argp)
                 consecutive_err = 0;
             }
             if (++consecutive_err > 300) {
-                snprintf(vp->fatal_msg, sizeof(vp->fatal_msg), "Error del decodificador H.264 (0x%08X)", (unsigned)r);
+                snprintf(vp->fatal_msg, sizeof(vp->fatal_msg), vt_msg("Error del decodificador H.264 (0x%08X)"), (unsigned)r);
                 vp->fatal = 1;
             }
         } else {
@@ -632,7 +632,7 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
         vp->nslot++;
     }
     if (vp->nslot < DEC_PICS + 1) {
-        snprintf(err, (size_t)errlen, "Sin memoria para las texturas de video");
+        snprintf(err, (size_t)errlen, vt_msg("Sin memoria para las texturas de video"));
         LOGE("video: solo %d texturas de %dx%d", vp->nslot, v->w, v->h);
         vpipe_free(vp);
         return -1;
@@ -643,7 +643,7 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
     vp->thread = sceKernelCreateThread("vt_vdec", vdec_thread, 0x10000100 - 10, 64 * 1024, 0,
                                        SCE_KERNEL_CPU_MASK_USER_1, NULL);
     if (vp->thread < 0 || sceKernelStartThread(vp->thread, 0, NULL) < 0) {
-        snprintf(err, (size_t)errlen, "No se pudo crear el hilo de video");
+        snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de video"));
         LOGE("video: %s (0x%08X)", err, (unsigned)vp->thread);
         vp->running = 0;
         vpipe_free(vp);
@@ -703,10 +703,10 @@ static void draw_view(const vslot_t *frame, view_t *vw)
         char line[160];
         vita2d_draw_rectangle(0, 0, AW, 64, COLOR_OSD_BG);
         vita2d_draw_rectangle(14, 12, 54, 20, COLOR_LIVE);
-        vita2d_pgf_draw_text(f, 19, 27, COLOR_WHITE, 0.7f, "DIRECTO");
+        vita2d_pgf_draw_text(f, 19, 27, COLOR_WHITE, 0.7f, vt_msg("DIRECTO"));
         vita2d_pgf_draw_text(f, 78, 29, COLOR_WHITE, 1.05f, vw->pp->channel);
         int64_t buffered = pq_span(&g_pl.vq) / PTS_PER_MS;
-        snprintf(line, sizeof(line), "%s   buffer %.1f s   descartados %d",
+        snprintf(line, sizeof(line), vt_msg("%s   buffer %.1f s   descartados %d"),
                  vw->pp->quality, buffered / 1000.0, vw->dropped);
         int lw = vita2d_pgf_text_width(f, 0.8f, line);
         vita2d_pgf_draw_text(f, AW - 14 - lw, 27, COLOR_GREY, 0.8f, line);
@@ -725,8 +725,8 @@ static void draw_view(const vslot_t *frame, view_t *vw)
         vita2d_draw_rectangle(0, SCREEN_H - 32, AW, 32, COLOR_OSD_BG);
         vita2d_pgf_draw_text(f, 14, SCREEN_H - 10, COLOR_GREY, 0.8f,
                              vw->pp->btn_back == SCE_CTRL_CIRCLE
-                                 ? "O: salir    Triangulo: info    Cuadrado: chat"
-                                 : "X: salir    Triangulo: info    Cuadrado: chat");
+                                 ? vt_msg("O: salir    Triangulo: info    Cuadrado: chat")
+                                 : vt_msg("X: salir    Triangulo: info    Cuadrado: chat"));
     }
     if (vw->pp->chat_on && *vw->pp->chat_on && vw->pp->chat_oauth && !vw->menu) {
         /* Tap target for composing chat messages. Only becomes writable
@@ -812,8 +812,10 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     err[0] = 0;
     pthread_mutex_init(&pl->clock.lock, NULL);
 
-    if (vdec_open(&vdec, pp->width, pp->height, err, errlen) < 0)
+    if (vdec_open(&vdec, pp->width, pp->height, err, errlen) < 0) {
+        pthread_mutex_destroy(&pl->clock.lock);
         return -1;
+    }
 
     pq_init(&pl->vq, 900, 24 * 1024 * 1024);
     pq_init(&pl->aq, 1500, 2 * 1024 * 1024);
@@ -823,7 +825,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         goto out_queues;
     }
     if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq) < 0) {
-        snprintf(err, (size_t)errlen, "No se pudo crear el hilo de descarga");
+        snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de descarga"));
         LOGE("%s", err);
         ret = -1;
         pq_abort(&pl->vq);
@@ -838,7 +840,12 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                                              SCE_KERNEL_CPU_MASK_USER_2, NULL);
     if (pl->audio_thread >= 0) {
         player_t *self = pl;
-        sceKernelStartThread(pl->audio_thread, sizeof(self), &self);
+        if (sceKernelStartThread(pl->audio_thread, sizeof(self), &self) < 0) {
+            sceKernelDeleteThread(pl->audio_thread);
+            pl->audio_thread = -1;
+            pl->audio_done = 1;
+            pl->audio_failed = 1;
+        }
     } else {
         LOGE("audio: no se pudo crear el hilo (0x%08X)", (unsigned)pl->audio_thread);
         pl->audio_done = 1;
@@ -884,9 +891,9 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                     char text[CHAT_TEXT_MAX];
                     vt_utf16_to_utf8(text,sizeof(text),(const uint16_t*)compose_text,192);
                     int rc=chat_send_text(text);
-                    view.notice=rc==0?"Message queued (server confirmation pending)":
-                        rc==-3?"Please slow down (chat rate limit)":
-                        rc==-2?"Message empty or too long":
+                    view.notice=rc==0?vt_msg("Message queued (server confirmation pending)"):
+                        rc==-3?vt_msg("Please slow down (chat rate limit)"):
+                        rc==-2?vt_msg("Message empty or too long"):
                         vt_tr(VT_I_LOGIN_TO_CHAT);
                     view.notice_until=now_us+3000000ULL;
                 }
@@ -946,7 +953,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                 }else if(compose_start(compose_title,compose_text)){
                     composing=1;view.menu=0;last_draw=0;
                 }else{
-                    view.notice="Cannot open PS Vita keyboard";
+                    view.notice=vt_msg("Cannot open PS Vita keyboard");
                     view.notice_until=now_us+3000000ULL;
                 }
             }
@@ -1000,16 +1007,16 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         if (pl->hls.finished && pq_count(&pl->vq) == 0 &&
             (vp->nready == 0 ||
              (pq_count(&pl->aq) == 0 && now_us - (last_present ? last_present : start_us) > 3000000ULL))) {
-            snprintf(err, (size_t)errlen, "%s", pl->hls.error[0] ? pl->hls.error : "El stream ha terminado");
+            snprintf(err, (size_t)errlen, "%s", pl->hls.error[0] ? pl->hls.error : vt_msg("El stream ha terminado"));
             ret = -1;
             break;
         }
 
         /* status line */
         if (pl->hls.in_ad)
-            view.status = "Anuncio de Twitch: saltando...";
+            view.status = vt_msg("Anuncio de Twitch: saltando...");
         else if (cur < 0 || pl->audio_buffering)
-            view.status = "Cargando...";
+            view.status = vt_msg("Cargando...");
         else
             view.status = NULL;
 

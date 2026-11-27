@@ -1,5 +1,10 @@
 # VitaTwitch
 
+### Experimental localization and stability patch
+
+Portuguese (Brazil), English and Spanish now cover the additional interface, playback, chat and network messages through a common catalog. Other languages retain their original menu translations and use English for additional untranslated messages. Server-provided messages and debug logs are not translated. UTF-8 keyboard titles are converted to UTF-16. HTTPS and IRC now require the bundled CA store; missing or invalid certificates stop connections. HTTP error bodies are no longer logged. HLS shutdown waits for the worker, and queue byte limits are enforced. Hardware and CI verification required; this is not a release. OAuth storage, ABR, VODs, clips, audio-only and the remaining feature roadmap are not implemented in this patch.
+
+
 ## Experimental 1.33 branch: 19 languages, SELECT extras, touch and writable chat
 
 This independent feature branch does **not** publish a new release yet. The
@@ -177,9 +182,9 @@ Genera `VitaTwitch.vpk`. Instálalo con VitaShell (la consola necesita HENkaku/E
 ## Pruebas en PC
 
 ```powershell
-gcc -DVT_NO_NET -Isrc tests/host_test.c src/ts_demux.c src/m3u8.c src/twitch.c src/json.c src/log.c -o host_test.exe
-gcc -DVT_NO_NET -Isrc tests/api_test.c src/json.c src/twitch.c src/auth.c src/m3u8.c src/log.c -o api_test.exe
-gcc -DVT_NO_NET -Isrc tests/chat_test.c src/chat.c src/json.c src/text.c src/log.c -o chat_test.exe
+gcc -DVT_NO_NET -Isrc tests/host_test.c src/ts_demux.c src/m3u8.c src/twitch.c src/json.c src/log.c src/i18n.c -o host_test.exe
+gcc -DVT_NO_NET -Isrc tests/api_test.c src/json.c src/twitch.c src/auth.c src/m3u8.c src/log.c src/i18n.c -o api_test.exe
+gcc -DVT_NO_NET -Isrc tests/chat_test.c src/chat.c src/json.c src/text.c src/log.c src/i18n.c -o chat_test.exe
 gcc -DVT_NO_NET -Isrc tests/mp4_test.c src/mp4_demux.c -o mp4_test.exe
 ```
 
