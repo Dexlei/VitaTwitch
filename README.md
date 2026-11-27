@@ -1,5 +1,9 @@
 # VitaTwitch
 
+### PlayFix 5 — legacy chat restoration
+
+This experimental build keeps the PlayFix 4 video/audio/HLS pipeline and restores the original 1.32 anonymous IRC reader, including badges and 7TV. The chat send composer is disabled; no account token is passed to IRC. The legacy chat TLS compatibility mode does not verify the server certificate, so chat authenticity is not guaranteed. The worker uses pthread creation and join for safe lifecycle management. Earlier descriptions of writable chat below refer to previous builds.
+
 ### Experimental playback profiles
 
 Four configurable profiles (Economy, Balanced, Low latency, Quality), optional automatic initial quality and controlled downward switching via fresh master playlist, two automatic reconnect attempts, adaptive audio prebuffer, download throughput and FPS diagnostics, volume via D-pad Left/Right, optional session-only sign-in, periodic account validation and split image cache quotas. Low latency uses fewer full HLS segments, not LL-HLS partial segments. Switches restart the decoder and may cause a brief interruption; no seamless upward ABR yet. CPU scaling is conservative and retains the existing hardware codec path. The default keeps manual quality selection. Real Vita testing is required.

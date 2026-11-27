@@ -42,8 +42,11 @@ jobs:
           grep -q 'SceTouch_stub' CMakeLists.txt
           grep -q 'src/i18n.c' CMakeLists.txt
           grep -q 'src/ime_utf8.c' CMakeLists.txt
-          grep -Fq 'CURLOPT_SSL_VERIFYPEER, 1L' src/chat.c
-          grep -Fq 'vt_utf16_to_utf8' src/player.c
+          grep -Fq 'PASS SCHMOOPIIE' src/chat.c
+          ! grep -Fq 'PASS oauth:' src/chat.c
+          grep -Fq 'pthread_create(&C.thread' src/chat.c
+          grep -Fq 'pthread_join(C.thread' src/chat.c
+          grep -Fq 'chat_start(pp->login)' src/player.c
           grep -Fq 'SCE_CTRL_SELECT' src/player.c
           grep -Fq 'vt_lang_set_code' src/main.c
   vita-sdk-vpk:
@@ -95,13 +98,13 @@ jobs:
             assert b'01.33' in sfo
           print('PASS experimental VitaSDK VPK, version 01.33, title ID and trusted IRC CA bundle')
           PY
-          cp build-ci/VitaTwitch.vpk VitaTwitch-1.33-EXPERIMENTAL.vpk
-          sha256sum VitaTwitch-1.33-EXPERIMENTAL.vpk > SHA256SUMS.txt
+          cp build-ci/VitaTwitch.vpk VitaTwitch-1.33-PlayFix5.vpk
+          sha256sum VitaTwitch-1.33-PlayFix5.vpk > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: VitaTwitch-1.33-19-lang-SELECT-touch-IRC-send-EXPERIMENTAL
+          name: VitaTwitch-1.33-PlayFix5-EXPERIMENTAL
           path: |
-            VitaTwitch-1.33-EXPERIMENTAL.vpk
+            VitaTwitch-1.33-PlayFix5.vpk
             SHA256SUMS.txt
             ca-bundle.sha256
           retention-days: 14
