@@ -304,8 +304,15 @@ int twitch_gql(const char *body, const char *oauth, buf_t *resp,
         snprintf(auth, sizeof(auth), "Authorization: OAuth %s", oauth);
         hdr = curl_slist_append(hdr, auth);
     }
-    if (http_request(c, "https://gql.twitch.tv/gql", body, hdr, resp, &status, abort_flag) < 0)
-        snprintf(err, errlen, vt_msg("Error de red al contactar con Twitch"));
+    int net=http_request(c,"https://gql.twitch.tv/gql",body,hdr,resp,&status,abort_flag);
+    if(net==-(int)CURLE_COULDNT_RESOLVE_HOST||net==-(int)CURLE_COULDNT_CONNECT||
+       net==-(int)CURLE_OPERATION_TIMEDOUT||net==-(int)CURLE_RECV_ERROR||
+       net==-(int)CURLE_SEND_ERROR){
+        if(!(abort_flag&&*abort_flag))
+            net=http_request(c,"https://gql.twitch.tv/gql",body,hdr,resp,&status,abort_flag);
+    }
+    if(net<0)
+        snprintf(err,errlen,"%s (curl %d)",vt_msg("Error de red al contactar con Twitch"),-net);
     else if (status == 401)
         snprintf(err, errlen, vt_msg("Sesion caducada: vuelve a iniciar sesion"));
     else if (status != 200)
