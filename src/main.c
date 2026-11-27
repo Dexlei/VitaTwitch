@@ -10,6 +10,7 @@
 #include <psp2/apputil.h>
 #include <psp2/common_dialog.h>
 #include <psp2/ctrl.h>
+#include <psp2/touch.h>
 #include <psp2/ime_dialog.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
@@ -215,7 +216,7 @@ static void tab_load(int t)
     if (!net_connected()) {
         tb->state = LS_ERROR;
         snprintf(tb->err, sizeof(tb->err), "Sin conexion a Internet. Conectate a una red Wi-Fi.");
-        LOGW("%s: sin Wi-Fi", g_tab_names[t]);
+        LOGW("%s: sin Wi-Fi", tab_name(t));
         return;
     }
     list_job_t *j = &tb->job;
@@ -237,11 +238,11 @@ static void tabs_update(void)
             continue;
         tb->busy = 0;
         if (tb->job.n >= 0)
-            LOGI("%s: %d canales", g_tab_names[t], tb->job.n);
+            LOGI("%s: %d canales", tab_name(t), tb->job.n);
         else if (tb->job.n == -2)
-            LOGI("%s: hace falta iniciar sesion", g_tab_names[t]);
+            LOGI("%s: hace falta iniciar sesion", tab_name(t));
         else if (!tb->task.abort_flag)
-            LOGE("%s: %s", g_tab_names[t], tb->job.err);
+            LOGE("%s: %s", tab_name(t), tb->job.err);
         if (tb->job.n >= 0) {
             /* keep the selection on the same channel if it is still there */
             char cur[32] = "";
