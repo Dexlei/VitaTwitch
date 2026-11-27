@@ -771,7 +771,7 @@ static void draw_view(const vslot_t *frame, view_t *vw)
 
 /* Native PS Vita IME without blocking the video/decode/render loop. */
 static int compose_start(SceWChar16 *title,SceWChar16 *buffer){
-    static const SceWChar16 blank[]={0};
+    static SceWChar16 blank[]={0};
     memset(buffer,0,sizeof(SceWChar16)*192);
     vt_utf8_to_utf16((uint16_t*)title,64,vt_tr(VT_I_SEND_MESSAGE));
     SceImeDialogParam param;
