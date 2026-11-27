@@ -26,6 +26,7 @@ add_executable(${PROJECT_NAME}
   src/ts_demux.c
   src/pktqueue.c
   src/player.c
+  src/playback_policy.c
   src/json.c
   src/auth.c
   src/task.c

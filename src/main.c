@@ -36,6 +36,7 @@
 #include "ui.h"
 #include "i18n.h"
 #include "ime_utf8.h"
+#include "playback_policy.h"
 
 int _newlib_heap_size_user = 96 * 1024 * 1024;
 
@@ -70,6 +71,8 @@ static int g_auth_checking;
 static char g_pref_quality[32];
 static char g_search[64];
 static int g_chat_on = 1;
+static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=0, g_diag=0, g_volume=100, g_remember=1;
+static unsigned long long g_auth_last_check;
 static int g_touch_manual_scroll = 0;
 
 static ui_input_t g_in;
@@ -149,6 +152,11 @@ static void settings_load(void)
             g_chat_on = atoi(line + 5) != 0;
         else if (!strncmp(line, "lang=", 5))
             vt_lang_set_code(line + 5);
+        else if (!strncmp(line, "profile=", 8)) {int p=atoi(line+8);if(p>=0&&p<VT_PROFILE_COUNT)g_profile=p;}
+        else if (!strncmp(line, "auto_quality=", 13)) g_auto_quality=atoi(line+13)!=0;
+        else if (!strncmp(line, "diag=", 5)) g_diag=atoi(line+5)!=0;
+        else if (!strncmp(line, "volume=", 7)) {int v=atoi(line+7);if(v>=0&&v<=100)g_volume=v;}
+        else if (!strncmp(line, "remember=", 9)) g_remember=atoi(line+9)!=0;
         else if (!strncmp(line, "touch=", 6))
             ui_touch_enable(atoi(line + 6) != 0);
     }
@@ -164,6 +172,7 @@ static void settings_save(void)
     fprintf(f, "quality=%s\nsearch=%s\nchat=%d\nlang=%s\ntouch=%d\n",
             g_pref_quality, g_search, g_chat_on,
             vt_lang_code(vt_lang_current()), ui_touch_enabled());
+    fprintf(f,"profile=%d\nauto_quality=%d\ndiag=%d\nvolume=%d\nremember=%d\n",g_profile,g_auto_quality,g_diag,g_volume,g_remember);
     fclose(f);
 }
 
@@ -293,6 +302,7 @@ static void auth_update(void)
     if (!g_auth_checking || !task_done(&g_auth_task))
         return;
     g_auth_checking = 0;
+    g_auth_last_check=sceKernelGetProcessTimeWide();
     int r = g_auth_task.result;
     if (r == 0)
         LOGI("sesion valida: @%s", g_auth_job.a.login);
@@ -300,7 +310,7 @@ static void auth_update(void)
         LOGE("comprobacion de sesion fallida (%d): %s", r, g_auth_job.err);
     if (r == 0) {
         g_auth = g_auth_job.a;
-        auth_save(&g_auth, AUTH_FILE);
+        if(g_remember)auth_save(&g_auth, AUTH_FILE);
     } else if (r == -1) {
         g_logged = 0;
         memset(&g_auth, 0, sizeof(g_auth));
@@ -797,7 +807,7 @@ static void play_channel(const char *login, const char *display, const char *tit
     m3u8_variant_t *list[M3U8_MAX_VARIANTS];
     int count = 0, fallback = 0;
     for (int i = 0; i < job.n; i++)
-        if (!job.v[i].audio_only && (job.v[i].height == 480 || job.v[i].height == 720))
+        if (!job.v[i].audio_only && job.v[i].height > 0 && job.v[i].height <=720)
             list[count++] = &job.v[i];
     if (count == 0) {
         fallback = 1;
@@ -810,7 +820,7 @@ static void play_channel(const char *login, const char *display, const char *tit
         return;
     }
 
-    int sel = quality_modal(display && display[0] ? display : login, list, count, fallback);
+    int sel = g_auto_quality ? vt_profile_pick(list,count,g_profile) : quality_modal(display && display[0] ? display : login, list, count, fallback);
     if (sel < 0)
         return;
     snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", list[sel]->name);
@@ -818,6 +828,10 @@ static void play_channel(const char *login, const char *display, const char *tit
 
     ui_clean_text(title ? title : "", clean_title, sizeof(clean_title));
     player_params_t pp;
+    int retries=0, reductions=0, r=0;
+    char wanted[48];
+    m3u8_variant_t previous;
+    for(;;){
     memset(&pp, 0, sizeof(pp));
     pp.url = list[sel]->url;
     pp.channel = display && display[0] ? display : login;
@@ -832,14 +846,38 @@ static void play_channel(const char *login, const char *display, const char *tit
     pp.chat_nick = g_logged ? g_auth.login : NULL;
     pp.chat_oauth = g_logged ? g_auth.access : NULL;
     pp.chat_on = &g_chat_on;
-    int chat_before = g_chat_on;
+    pp.profile=g_profile;pp.auto_quality=g_auto_quality;
+    pp.has_lower=vt_profile_lower(list,count,list[sel])>=0;
+    pp.diagnostics=g_diag;pp.volume=&g_volume;
     {
         char u[160];
         LOGI("reproducir %s en %s: %s", login, pp.quality, log_url(pp.url, u, sizeof(u)));
     }
-    int r = player_run(&pp, err, sizeof(err));
-    if (g_chat_on != chat_before)
-        settings_save();
+    scePowerSetArmClockFrequency(vt_profile_clock(g_profile,pp.height,pp.fps));
+    r = player_run(&pp, err, sizeof(err));
+    scePowerSetArmClockFrequency(333);
+    settings_save();
+    if(r!=PLAYER_RECONNECT&&r!=PLAYER_LOWER_QUALITY)break;
+    if(r==PLAYER_RECONNECT&&++retries>2){r=-1;break;}
+    if(r==PLAYER_LOWER_QUALITY&&++reductions>4){r=-1;break;}
+    previous=*list[sel];
+    snprintf(wanted,sizeof(wanted),"%s",previous.name);
+    const int lower=(r==PLAYER_LOWER_QUALITY);
+    memset(&job,0,sizeof(job));
+    snprintf(job.login,sizeof(job.login),"%s",login);
+    snprintf(job.oauth,sizeof(job.oauth),"%s",g_logged?g_auth.access:"");
+    if(run_with_spinner(&task,variants_run,&job,vt_opt(lower?VT_O_LOWER:VT_O_RECONNECT))<0){r=0;break;}
+    if(job.n<=0){snprintf(err,sizeof(err),"%s",job.err);r=-1;break;}
+    count=0;
+    for(int i=0;i<job.n;i++)if(!job.v[i].audio_only&&job.v[i].height>0&&job.v[i].height<=720)list[count++]=&job.v[i];
+    if(!count)for(int i=0;i<job.n;i++)if(!job.v[i].audio_only&&job.v[i].height>0&&job.v[i].height<=1080)list[count++]=&job.v[i];
+    if(!count){snprintf(err,sizeof(err),"%s",vt_msg("El stream no tiene calidades de video compatibles."));r=-1;break;}
+    sel=-1;
+    if(lower)sel=vt_profile_lower(list,count,&previous);
+    else for(int i=0;i<count;i++)if(!strcmp(wanted,list[i]->name)){sel=i;break;}
+    if(sel<0&&!lower)sel=vt_profile_pick(list,count,g_profile);
+    if(sel<0){snprintf(err,sizeof(err),"%s",vt_msg("Reproduccion detenida"));r=-1;break;}
+    }
     ui_input_poll(&g_in);
     if (r < 0)
         modal_message(vt_msg("Reproduccion detenida"), err);
@@ -957,7 +995,7 @@ static void account_login(void)
                 g_auth = job.a;
                 g_logged = 1;
                 ensure_data_dir();
-                auth_save(&g_auth, AUTH_FILE);
+                if(g_remember)auth_save(&g_auth, AUTH_FILE);
                 char hi[96], name[80];
                 ui_clean_text(g_auth.display, name, sizeof(name));
                 snprintf(hi, sizeof(hi), vt_msg("Hola, %s"), name);
@@ -1058,7 +1096,7 @@ static void language_screen(void)
 static void extras_menu(void)
 {
     /* All entries share the same hit boxes for touch and controller use. */
-    const int x=195,y=52,w=570,h=440,row=48,count=7;
+    const int x=145,y=20,w=670,h=504,row=39,count=11;
     int sel=0;
     for(;;) {
         ui_input_poll(&g_in);
@@ -1079,7 +1117,11 @@ static void extras_menu(void)
                 case 3: g_chat_on=!g_chat_on;settings_save();break;
                 case 4: img_clear();toast(vt_msg("Thumbnail cache cleared"));break;
                 case 5: modal_message("VitaTwitch", vt_msg("19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork."));break;
-                case 6:return;
+                case 6:g_profile=(g_profile+1)%VT_PROFILE_COUNT;settings_save();break;
+                case 7:g_auto_quality=!g_auto_quality;settings_save();break;
+                case 8:g_diag=!g_diag;settings_save();break;
+                case 9:g_remember=!g_remember;if(g_remember&&g_logged)auth_save(&g_auth,AUTH_FILE);else sceIoRemove(AUTH_FILE);settings_save();break;
+                case 10:return;
             }
         }
         frame_begin();draw_home();
@@ -1090,11 +1132,12 @@ static void extras_menu(void)
             if(sel==i)ui_round_rect(x+14,yy,w-28,row-4,7,C_PURPLE);
             const char *label=i==0?vt_tr(VT_I_ACCOUNT):i==1?vt_tr(VT_I_LANGUAGE):
                 i==2?vt_tr(VT_I_TOUCH):i==3?vt_tr(VT_I_CHAT):
-                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):vt_tr(VT_I_CLOSE);
+                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):i==6?vt_opt(VT_O_PROFILE):i==7?vt_opt(VT_O_AUTO):i==8?vt_opt(VT_O_DIAG):i==9?vt_opt(VT_O_REMEMBER):vt_tr(VT_I_CLOSE);
             ui_text_fit(x+32,yy+31,w-220,C_WHITE,0.97f,label);
             if(i==1) ui_text_fit(x+w-182,yy+31,157,C_GREY,0.76f,vt_lang_code(vt_lang_current()));
-            if(i==2||i==3)ui_text(x+w-114,yy+31,C_WHITE,0.83f,
-                (i==2?ui_touch_enabled():g_chat_on)?vt_tr(VT_I_ON):vt_tr(VT_I_OFF));
+            if(i==6)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,vt_opt((vt_option_id)(VT_O_ECONOMY+g_profile)));
+            if(i==2||i==3||i==7||i==8||i==9)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,
+                (i==2?ui_touch_enabled():i==3?g_chat_on:i==7?g_auto_quality:i==8?g_diag:g_remember)?vt_tr(VT_I_ON):vt_tr(VT_I_OFF));
         }
         frame_end();
     }
@@ -1121,7 +1164,7 @@ static void init_system(void)
     log_open(LOG_FILE, LOG_PREV_FILE);
     log_header();
 
-    scePowerSetArmClockFrequency(444);
+    scePowerSetArmClockFrequency(333);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
@@ -1216,7 +1259,8 @@ int main(void)
     for (int t = 0; t < TAB_COUNT; t++)
         g_tabs[t].sel = t == TAB_SEARCH ? -1 : 0;
 
-    if (auth_load(&g_auth, AUTH_FILE) == 0) {
+    if(!g_remember)sceIoRemove(AUTH_FILE);
+    if (g_remember && auth_load(&g_auth, AUTH_FILE) == 0) {
         LOGI("sesion guardada de @%s, comprobando", g_auth.login);
         g_logged = 1;
         g_tab = TAB_FOLLOWED;
@@ -1234,6 +1278,11 @@ int main(void)
     for (;;) {
         ui_input_poll(&g_in);
         auth_update();
+        if(g_logged&&!g_auth_checking&&net_connected()&&sceKernelGetProcessTimeWide()-g_auth_last_check>3600000000ULL){
+            g_auth_job.a=g_auth;
+            if(task_start(&g_auth_task,auth_check_run,&g_auth_job)==0)g_auth_checking=1;
+            g_auth_last_check=sceKernelGetProcessTimeWide();
+        }
         tabs_update();
         tab_t *tb = &g_tabs[g_tab];
         unsigned p = g_in.pressed;

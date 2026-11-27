@@ -10,6 +10,7 @@ int main(void) {
     assert(vt_lang_code(i)[0] && vt_lang_name(i)[0]);
     for(int j=0;j<VT_I_COUNT;j++)assert(vt_tr((vt_text_id)j)[0]);
     assert(vt_lang_set_code(vt_lang_code(i))==0);
+    for(int j=0;j<VT_O_COUNT;j++)assert(vt_opt((vt_option_id)j)[0]);
     assert(vt_msg_count()==97);
     for(size_t k=0;k<vt_msg_count();k++) {
       const char *s=vt_msg(vt_msg_key(k));

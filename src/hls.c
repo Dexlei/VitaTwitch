@@ -14,8 +14,9 @@
 #include <string.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/cpu.h>
+#include <psp2/kernel/processmgr.h>
 
-#define LIVE_EDGE 3 /* start this many segments behind the newest one */
+/* live edge is selected by the playback profile */
 
 static int on_es(void *user, int stream, const uint8_t *data, int size,
                  int64_t pts, int64_t dts)
@@ -76,8 +77,9 @@ static int hls_thread(SceSize args, void *argp)
     buf_t pl = {0}, seg = {0};
     static m3u8_media_t media; /* large; only one downloader runs at a time */
     long long next_seq = -1;
-    int fails = 0;
-    long status;
+    int fails = 0, segment_failures = 0;
+    unsigned long long last_new = sceKernelGetProcessTimeWide();
+    long status = 0;
 
     if (!c) {
         snprintf(h->error, sizeof(h->error), vt_msg("No se pudo iniciar curl"));
@@ -91,7 +93,8 @@ static int hls_thread(SceSize args, void *argp)
             if (!h->running)
                 break;
             LOGW("hls: fallo al leer la playlist (HTTP %ld, intento %d)", status, fails + 1);
-            if (++fails >= 8 || status == 404 || status == 403) {
+            if (++fails >= 4 || status == 404 || status == 403 || status == 401) {
+                h->retryable = 1;
                 snprintf(h->error, sizeof(h->error), vt_msg("Stream terminado (HTTP %ld)"), status);
                 LOGE("hls: %s", h->error);
                 break;
@@ -102,7 +105,7 @@ static int hls_thread(SceSize args, void *argp)
         fails = 0;
 
         if (next_seq < 0) { /* join near the live edge */
-            int start = media.count > LIVE_EDGE ? media.count - LIVE_EDGE : 0;
+            int start = media.count > h->live_edge ? media.count - h->live_edge : 0;
             next_seq = media.count ? media.seg[start].seq : 0;
             LOGI("hls: playlist con %d segmentos de %.1f s, empiezo en #%lld", media.count,
                  (double)media.target_duration, next_seq);
@@ -121,6 +124,7 @@ static int hls_thread(SceSize args, void *argp)
                 continue;
             next_seq = s->seq + 1;
             got_new = 1;
+            last_new = sceKernelGetProcessTimeWide();
 
             if (s->is_ad) {
                 if (!h->in_ad)
@@ -153,6 +157,7 @@ static int hls_thread(SceSize args, void *argp)
             }
 
             int ok = 0;
+            unsigned long long t0 = sceKernelGetProcessTimeWide();
             for (int attempt = 0; attempt < 2 && h->running && !ok; attempt++) {
                 if (http_request(c, s->url, NULL, NULL, &seg, &status, &h->abort_req) == 0 &&
                     status == 200)
@@ -162,7 +167,15 @@ static int hls_thread(SceSize args, void *argp)
                 if (h->running)
                     LOGW("hls: segmento #%lld perdido (HTTP %ld)", s->seq, status);
                 demux_discontinuity(h);
+                h->segment_losses++;
+                if (++segment_failures >= 4) { h->retryable=1; h->running=0; }
                 continue;
+            }
+            segment_failures=0;
+            unsigned long long dt=sceKernelGetProcessTimeWide()-t0;
+            if(dt>0){
+                unsigned kbps=(unsigned)(((unsigned long long)seg.size*8000ULL)/dt);
+                h->download_kbps=h->download_kbps?(h->download_kbps*3+kbps)/4:kbps;
             }
             if (mp4_looks_like(seg.data, seg.size)) {
                 int r = mp4_demux_feed(&h->mp4, seg.data, seg.size);
@@ -185,8 +198,12 @@ static int hls_thread(SceSize args, void *argp)
             LOGI("hls: la playlist indica fin del directo");
             break;
         }
-        if (!got_new)
-            sleep_ms_while_running(h, (int)(media.target_duration * 500));
+        if (!got_new) {
+            if (!h->in_ad && sceKernelGetProcessTimeWide()-last_new>45000000ULL) { h->retryable=1; break; }
+            int delay=(int)(media.target_duration*500);
+            if(delay<250)delay=250;
+            sleep_ms_while_running(h,delay);
+        }
     }
 
     buf_free(&pl);
@@ -196,10 +213,11 @@ static int hls_thread(SceSize args, void *argp)
     return sceKernelExitDeleteThread(0);
 }
 
-int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq)
+int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, int live_edge)
 {
     memset(h, 0, sizeof(*h));
     snprintf(h->url, sizeof(h->url), "%s", media_url);
+    h->live_edge=live_edge<1?1:live_edge>6?6:live_edge;
     h->vq = vq;
     h->aq = aq;
     h->running = 1;

@@ -17,7 +17,9 @@ void http_global_term(void)
 static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
     buf_t *b = userdata;
+    if(nmemb && size>SIZE_MAX/nmemb)return 0;
     size_t n = size * nmemb;
+    if(b->size>16u*1024u*1024u || n>16u*1024u*1024u-b->size)return 0;
     if (buf_append(b, ptr, n) < 0)
         return 0;
     return n;

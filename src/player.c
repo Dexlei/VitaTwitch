@@ -22,6 +22,8 @@
 #include "ui.h"
 #include "i18n.h"
 #include "ime_utf8.h"
+#include "playback_policy.h"
+#include <psp2/power.h>
 
 #include <malloc.h>
 #include <stdio.h>
@@ -91,6 +93,8 @@ typedef struct {
     pktqueue_t vq, aq;
     hls_t hls;
     av_clock_t clock;
+    int profile;
+    volatile int volume;
     int freerun;                /* no audio: clock runs on wall time */
 
     volatile int audio_running;
@@ -113,7 +117,7 @@ static int audio_thread(SceSize args, void *argp)
     int accum_frames = 0;
     int64_t accum_pts = TS_NOPTS;
 
-    int port = -1, rate = 0, chans = 0;
+    int port = -1, rate = 0, chans = 0, current_volume=-1;
     int lib_init = 0, dec_ok = 0, prebuffer = 1, underflows = 0, audio_errors = 0;
     SceAudiodecCtrl ctrl;
     SceAudiodecInfo info;
@@ -125,7 +129,7 @@ static int audio_thread(SceSize args, void *argp)
     while (pl->audio_running) {
         if (prebuffer) {
             /* wait for ~1 s of audio before (re)starting output */
-            if (pq_span(&pl->aq) >= 1000 * PTS_PER_MS ||
+            if (pq_span(&pl->aq) >= vt_profile_buffer_ms(pl->profile,pl->rebuffers) * PTS_PER_MS ||
                 (pl->hls.finished && pq_count(&pl->aq) > 0)) {
                 prebuffer = 0;
             } else {
@@ -203,7 +207,8 @@ static int audio_thread(SceSize args, void *argp)
             if (port < 0) {
                 port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, AUDIO_GRAIN, ai.sample_rate, mode);
                 if (port >= 0) {
-                    int vol[2] = { SCE_AUDIO_VOLUME_0DB, SCE_AUDIO_VOLUME_0DB };
+                    current_volume=pl->volume;
+                    int vol[2] = { SCE_AUDIO_VOLUME_0DB*current_volume/100, SCE_AUDIO_VOLUME_0DB*current_volume/100 };
                     sceAudioOutSetVolume(port, SCE_AUDIO_VOLUME_FLAG_L_CH | SCE_AUDIO_VOLUME_FLAG_R_CH, vol);
                 }
             } else {
@@ -250,6 +255,12 @@ static int audio_thread(SceSize args, void *argp)
 
         int64_t grain_dur = (int64_t)AUDIO_GRAIN * 90000 / rate;
         while (accum_frames >= AUDIO_GRAIN && pl->audio_running) {
+            if(current_volume!=pl->volume){
+                current_volume=pl->volume;
+                int v=SCE_AUDIO_VOLUME_0DB*current_volume/100;
+                int vol[2]={v,v};
+                sceAudioOutSetVolume(port,SCE_AUDIO_VOLUME_FLAG_L_CH|SCE_AUDIO_VOLUME_FLAG_R_CH,vol);
+            }
             sceAudioOutOutput(port, accum);
             pl->audio_buffering = 0;
             /* the previous grain is what is audible right now */
@@ -487,7 +498,7 @@ static int vdec_thread(SceSize args, void *argp)
             } else if (lag > 150 * PTS_PER_MS && disposable) {
                 skip = 1;
                 vp->st_undecoded++;
-            } else if (disposable && chat && vp->pp->fps > 40) {
+            } else if (disposable && chat && vp->pp->fps > 40 && lag > 80 * PTS_PER_MS) {
                 /* chat visible on a 60 fps stream: unreferenced frames (about half
                  * on Twitch) are not decoded, halving the decoder's work */
                 skip = 1;
@@ -666,6 +677,9 @@ typedef struct {
     const player_params_t *pp;
     int osd;
     int dropped;
+    float fps_now;
+    int cpu_mhz;
+    char volume_notice[96];
     const char *status;   /* centred message (buffering, ads...) or NULL */
     int menu;             /* in-player extras opened by SELECT */
     int menu_sel;
@@ -727,6 +741,14 @@ static void draw_view(const vslot_t *frame, view_t *vw)
                              vw->pp->btn_back == SCE_CTRL_CIRCLE
                                  ? vt_msg("O: salir    Triangulo: info    Cuadrado: chat")
                                  : vt_msg("X: salir    Triangulo: info    Cuadrado: chat"));
+    }
+    if(vw->pp->diagnostics && !vw->menu){
+        char a[160],b[160];
+        snprintf(a,sizeof(a),"%s %.1f | %s %.2f Mbps | %s %d MHz",vt_opt(VT_O_FPS),vw->fps_now,vt_opt(VT_O_RATE),g_pl.hls.download_kbps/1000.0,vt_opt(VT_O_CPU),vw->cpu_mhz);
+        snprintf(b,sizeof(b),"%s %.1f s | %s %d | %s %d",vt_opt(VT_O_BUFFER),pq_span(&g_pl.aq)/90000.0,vt_opt(VT_O_REBUFFERS),g_pl.rebuffers,vt_opt(VT_O_DROPPED),vw->dropped);
+        vita2d_draw_rectangle(0,70,AW,58,COLOR_OSD_BG);
+        ui_text_fit(10,91,AW-20,COLOR_WHITE,0.72f,a);
+        ui_text_fit(10,116,AW-20,COLOR_WHITE,0.72f,b);
     }
     if (vw->pp->chat_on && *vw->pp->chat_on && vw->pp->chat_oauth && !vw->menu) {
         /* Tap target for composing chat messages. Only becomes writable
@@ -809,6 +831,9 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     memset(&view, 0, sizeof(view));
     view.pp = pp;
     view.osd = 1;
+    pl->profile=pp->profile;
+    pl->volume=pp->volume?*pp->volume:100;
+    view.cpu_mhz=vt_profile_clock(pp->profile,pp->height,pp->fps);
     err[0] = 0;
     pthread_mutex_init(&pl->clock.lock, NULL);
 
@@ -824,7 +849,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         ret = -1;
         goto out_queues;
     }
-    if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq) < 0) {
+    if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq, vt_profile_edge(pp->profile)) < 0) {
         snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de descarga"));
         LOGE("%s", err);
         ret = -1;
@@ -870,6 +895,8 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     uint64_t draw_us = 0, draw_max = 0;
     unsigned draw_n = 0;
     int freerun_logged = 0, first_logged = 0;
+    int fps_frames=0, bad_intervals=0, stable_intervals=0, prev_rebuffers=0;
+    uint64_t fps_time=start_us;
     /* a frame is due when its pts is within half a frame of the clock */
     int64_t half = (int64_t)(90000.0 / ((pp->fps > 1 ? pp->fps : 30.0f) * 2.0f));
 
@@ -939,6 +966,14 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                     LOGI("chat %s",*pp->chat_on?"visible":"oculto");
                 }
                 if(pressed&SCE_CTRL_RTRIGGER)open_composer=1;
+                if(pressed&(SCE_CTRL_LEFT|SCE_CTRL_RIGHT)){
+                    int v=pl->volume+(pressed&SCE_CTRL_RIGHT?5:-5);
+                    if(v<0)v=0;
+                    if(v>100)v=100;
+                    pl->volume=v; if(pp->volume)*pp->volume=v;
+                    snprintf(view.volume_notice,sizeof(view.volume_notice),"%s: %d%%",vt_opt(VT_O_VOLUME),v);
+                    view.notice=view.volume_notice;view.notice_until=now_us+2000000ULL;
+                }
                 if(input.touch_tap){
                     if(pp->chat_on&&*pp->chat_on&&
                        ui_touch_hit(&input,SCREEN_W-155,SCREEN_H-41,147,34))
@@ -967,6 +1002,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
             sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT); /* keep the screen on */
             last_tick = now_us;
         }
+        if(now_us-fps_time>=1000000ULL){view.fps_now=(float)(fps_frames*1000000.0/(now_us-fps_time));fps_frames=0;fps_time=now_us;}
         if (now_us - last_stats > 10000000ULL) { /* every 10 s */
             int idec, iev, ifail, ifree;
             img_stats(&idec, &iev, &ifail, &ifree);
@@ -984,6 +1020,16 @@ int player_run(const player_params_t *pp, char *err, int errlen)
                  draw_n ? draw_us / 1000.0 / draw_n : 0.0, draw_max / 1000.0, max_present_gap / 1000.0,
                  vp->st_max_lag / PTS_PER_MS / 1000.0, chat_view_renders(), chat_view_avg_ms_x10() / 10.0,
                  idec, iev, ifail, ifree);
+            int poor=(pl->rebuffers-prev_rebuffers>=2)||vp->st_idr_jumps>=2||(presented>30&&late_dropped>presented/4);
+            prev_rebuffers=pl->rebuffers;
+            if(poor){bad_intervals++;stable_intervals=0;if(view.cpu_mhz<444 && scePowerSetArmClockFrequency(444)>=0)view.cpu_mhz=444;}
+            else {bad_intervals=0;stable_intervals++;}
+            if(stable_intervals>=3 && pp->profile!=VT_PROFILE_QUALITY && pp->height<=540 && pp->fps<=40 && view.cpu_mhz>333){
+                if(scePowerSetArmClockFrequency(333)>=0)view.cpu_mhz=333;
+            }
+            if(bad_intervals>=2 && pp->auto_quality && pp->has_lower && !pl->hls.in_ad && !composing){
+                ret=PLAYER_LOWER_QUALITY;break;
+            }
             vp->st_aus = vp->st_pics = vp->st_multi = vp->st_errors = vp->st_undecoded = 0;
             vp->st_chat_skip = vp->st_idr_jumps = 0;
             vp->st_dec_us = vp->st_dec_max = 0;
@@ -1008,7 +1054,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
             (vp->nready == 0 ||
              (pq_count(&pl->aq) == 0 && now_us - (last_present ? last_present : start_us) > 3000000ULL))) {
             snprintf(err, (size_t)errlen, "%s", pl->hls.error[0] ? pl->hls.error : vt_msg("El stream ha terminado"));
-            ret = -1;
+            ret = pl->hls.retryable ? PLAYER_RECONNECT : -1;
             break;
         }
 
@@ -1101,6 +1147,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
             last_present = t_draw;
             last_draw = t_end;
             presented++;
+            fps_frames++;
             draw_us += t_end - t_draw;
             draw_n++;
             if (t_end - t_draw > draw_max)

@@ -1,5 +1,10 @@
 # VitaTwitch
 
+### Experimental playback profiles
+
+Four configurable profiles (Economy, Balanced, Low latency, Quality), optional automatic initial quality and controlled downward switching via fresh master playlist, two automatic reconnect attempts, adaptive audio prebuffer, download throughput and FPS diagnostics, volume via D-pad Left/Right, optional session-only sign-in, periodic account validation and split image cache quotas. Low latency uses fewer full HLS segments, not LL-HLS partial segments. Switches restart the decoder and may cause a brief interruption; no seamless upward ABR yet. CPU scaling is conservative and retains the existing hardware codec path. The default keeps manual quality selection. Real Vita testing is required.
+
+
 ### Experimental localization and stability patch
 
 All 19 languages now have 30 core and 97 additional interface, playback, chat and network messages. The extended catalogs are checked for count and matching format placeholders. Native speaker review and on-device font/layout verification remain necessary. Server-provided messages and debug logs are not translated. UTF-8 keyboard titles are converted to UTF-16. HTTPS and IRC now require the bundled CA store; missing or invalid certificates stop connections. HTTP error bodies are no longer logged. HLS shutdown waits for the worker, and queue byte limits are enforced. Hardware and CI verification required; this is not a release. OAuth storage, ABR, VODs, clips, audio-only and the remaining feature roadmap are not implemented in this patch.

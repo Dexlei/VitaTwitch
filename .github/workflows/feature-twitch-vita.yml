@@ -21,6 +21,8 @@ jobs:
           /tmp/vt-locale-test
           gcc -std=c11 -Wall -Wextra -Werror -Isrc tests/ime_utf8_test.c src/ime_utf8.c -o /tmp/vt-keyboard-test
           /tmp/vt-keyboard-test
+          gcc -std=c11 -Wall -Wextra -Werror -Isrc tests/playback_policy_test.c src/playback_policy.c -o /tmp/vt-policy-test
+          /tmp/vt-policy-test
       - name: IRC message sanitization and UTF-8 security checks
         run: |
           set -euo pipefail

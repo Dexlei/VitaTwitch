@@ -113,12 +113,13 @@ int auth_load(auth_t *a, const char *path)
 
 int auth_save(const auth_t *a, const char *path)
 {
-    FILE *f = fopen(path, "w");
-    if (!f)
-        return -1;
-    fprintf(f, "access=%s\nrefresh=%s\nuser_id=%s\nlogin=%s\ndisplay=%s\navatar=%s\n",
-            a->access, a->refresh, a->user_id, a->login, a->display, a->avatar);
-    fclose(f);
+    char tmp[512];
+    if(snprintf(tmp,sizeof(tmp),"%s.tmp",path)>=(int)sizeof(tmp))return -1;
+    FILE *f=fopen(tmp,"w");if(!f)return -1;
+    int ok=fprintf(f,"access=%s\nrefresh=%s\nuser_id=%s\nlogin=%s\ndisplay=%s\navatar=%s\n",a->access,a->refresh,a->user_id,a->login,a->display,a->avatar)>=0;
+    if(fflush(f)!=0)ok=0;
+    if(fclose(f)!=0)ok=0;
+    if(!ok||rename(tmp,path)!=0){remove(tmp);return -1;}
     return 0;
 }
 

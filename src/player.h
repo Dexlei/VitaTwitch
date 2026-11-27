@@ -15,11 +15,18 @@ typedef struct {
     const char *login;      /* channel login (chat room) */
     const char *chat_nick;  /* logged-in Twitch account (nullable) */
     const char *chat_oauth; /* OAuth token with chat:read,chat:edit (nullable) */
+    int profile;
+    int auto_quality;
+    int has_lower;
+    int diagnostics;
+    int *volume;
     int *chat_on;           /* in/out: chat panel visible (remembered by the caller) */
 } player_params_t;
 
 /* Plays the stream until the user leaves or it ends. Blocks.
  * Returns 0 when the user exited, <0 on error (err filled). */
+#define PLAYER_RECONNECT 1
+#define PLAYER_LOWER_QUALITY 2
 int player_run(const player_params_t *pp, char *err, int errlen);
 
 #endif

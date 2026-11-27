@@ -45,4 +45,6 @@ const char *vt_tr(vt_text_id key);
 size_t vt_msg_count(void);
 const char *vt_msg_key(size_t i);
 const char *vt_msg(const char *source);
+typedef enum { VT_O_PROFILE,VT_O_ECONOMY,VT_O_BALANCED,VT_O_LOW_LATENCY,VT_O_QUALITY,VT_O_AUTO,VT_O_DIAG,VT_O_VOLUME,VT_O_RECONNECT,VT_O_LOWER,VT_O_REMEMBER,VT_O_FPS,VT_O_RATE,VT_O_CPU,VT_O_REBUFFERS,VT_O_BUFFER,VT_O_DROPPED,VT_O_COUNT } vt_option_id;
+const char *vt_opt(vt_option_id key);
 #endif

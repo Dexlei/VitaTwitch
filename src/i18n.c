@@ -247,3 +247,26 @@ const char *vt_msg(const char *source) {
   }
   return source;
 }
+
+static const char *const options[VT_LANG_COUNT][VT_O_COUNT] = {
+{"Playback profile","Economy","Balanced","Low latency","Quality","Auto quality","Diagnostics","Volume","Reconnecting...","Lowering quality...","Remember account","FPS","Throughput","CPU","Rebuffers","Buffer","Dropped frames"},
+{"Perfil de reproducción","Ahorro","Equilibrado","Baja latencia","Calidad","Calidad automática","Diagnóstico","Volumen","Reconectando...","Reduciendo calidad...","Recordar cuenta","FPS","Caudal","CPU","Pausas","Búfer","Fotogramas descartados"},
+{"Perfil de reprodução","Econômico","Equilibrado","Baixa latência","Qualidade","Qualidade automática","Diagnóstico","Volume","Reconectando...","Reduzindo a qualidade...","Lembrar conta","FPS","Taxa de download","CPU","Pausas","Buffer","Frames descartados"},
+{"Profil de lecture","Économie","Équilibré","Faible latence","Qualité","Qualité auto","Diagnostic","Volume","Reconnexion...","Réduction de qualité...","Mémoriser le compte","IPS","Débit","CPU","Pauses","Tampon","Images perdues"},
+{"Profilo riproduzione","Risparmio","Bilanciato","Bassa latenza","Qualità","Qualità automatica","Diagnostica","Volume","Riconnessione...","Riduzione qualità...","Ricorda account","FPS","Velocità","CPU","Pause","Buffer","Frame scartati"},
+{"Wiedergabeprofil","Sparmodus","Ausgewogen","Niedrige Latenz","Qualität","Auto-Qualität","Diagnose","Lautstärke","Verbindung wird erneuert...","Qualität wird reduziert...","Konto merken","FPS","Durchsatz","CPU","Pausen","Puffer","Verworfene Bilder"},
+{"Профиль воспроизведения","Экономия","Баланс","Низкая задержка","Качество","Автокачество","Диагностика","Громкость","Переподключение...","Снижение качества...","Запомнить аккаунт","FPS","Скорость","CPU","Паузы","Буфер","Пропущенные кадры"},
+{"Profil pemutaran","Hemat","Seimbang","Latensi rendah","Kualitas","Kualitas otomatis","Diagnostik","Volume","Menghubungkan ulang...","Menurunkan kualitas...","Ingat akun","FPS","Kecepatan","CPU","Jeda","Buffer","Frame terbuang"},
+{"Profile ng playback","Matipid","Balanse","Mababang latency","Kalidad","Auto quality","Diagnostics","Volume","Kumokonekta muli...","Ibinababa ang kalidad...","Tandaan ang account","FPS","Bilis","CPU","Mga paghinto","Buffer","Nalaktawang frame"},
+{"Profile sa playback","Tipid","Balanse","Ubos nga latency","Kalidad","Auto quality","Diagnostics","Volume","Nagkonektar pag-usab...","Gipaubos ang kalidad...","Hinumdomi ang account","FPS","Katulin","CPU","Mga paghunong","Buffer","Gilaktawang frame"},
+{"Afspeelprofiel","Zuinig","Gebalanceerd","Lage latentie","Kwaliteit","Auto-kwaliteit","Diagnose","Volume","Opnieuw verbinden...","Kwaliteit verlagen...","Account onthouden","FPS","Doorvoer","CPU","Pauzes","Buffer","Gemiste frames"},
+{"Profil odtwarzania","Oszczędny","Zrównoważony","Niskie opóźnienie","Jakość","Auto jakość","Diagnostyka","Głośność","Ponowne łączenie...","Obniżanie jakości...","Zapamiętaj konto","FPS","Przepływność","CPU","Przerwy","Bufor","Pominięte klatki"},
+{"Oynatma profili","Tasarruf","Dengeli","Düşük gecikme","Kalite","Otomatik kalite","Tanılama","Ses düzeyi","Yeniden bağlanıyor...","Kalite düşürülüyor...","Hesabı hatırla","FPS","Aktarım hızı","CPU","Duraklama","Tampon","Atlanan kare"},
+{"Профіль відтворення","Економія","Баланс","Низька затримка","Якість","Автоякість","Діагностика","Гучність","Перепідключення...","Зниження якості...","Запам’ятати акаунт","FPS","Швидкість","CPU","Паузи","Буфер","Пропущені кадри"},
+{"Uppspelningsprofil","Sparläge","Balanserat","Låg latens","Kvalitet","Automatisk kvalitet","Diagnostik","Volym","Återansluter...","Sänker kvalitet...","Kom ihåg konto","FPS","Hastighet","CPU","Pauser","Buffert","Tappade bildrutor"},
+{"再生プロファイル","省電力","バランス","低遅延","高画質","自動画質","診断","音量","再接続中...","画質を下げています...","アカウントを保存","FPS","転送速度","CPU","停止回数","バッファ","破棄フレーム"},
+{"재생 프로필","절전","균형","낮은 지연","고화질","자동 화질","진단","음량","재연결 중...","화질 낮추는 중...","계정 기억","FPS","전송 속도","CPU","버퍼링 횟수","버퍼","누락 프레임"},
+{"播放模式","省电","均衡","低延迟","画质","自动画质","诊断","音量","正在重连...","正在降低画质...","记住账号","FPS","下载速率","CPU","缓冲次数","缓冲","丢帧"},
+{"播放模式","省電","平衡","低延遲","畫質","自動畫質","診斷","音量","正在重新連線...","正在降低畫質...","記住帳戶","FPS","下載速率","CPU","緩衝次數","緩衝","捨棄影格"},
+};
+const char *vt_opt(vt_option_id key) { return key>=0 && key<VT_O_COUNT ? options[active][key] : ""; }

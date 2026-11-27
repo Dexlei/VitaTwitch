@@ -16,6 +16,10 @@ typedef struct {
     volatile int in_ad;       /* currently skipping Twitch ad segments */
     volatile int finished;    /* stream ended or failed */
     volatile int segments_done;
+    volatile int retryable;
+    volatile unsigned download_kbps;
+    volatile unsigned segment_losses;
+    int live_edge;
     char error[128];
 
     SceUID thread;
@@ -24,7 +28,7 @@ typedef struct {
     char map_loaded[M3U8_URL_MAX];    /* init segment currently in mp4 */
 } hls_t;
 
-int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq);
+int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, int live_edge);
 void hls_stop(hls_t *h);
 
 #endif

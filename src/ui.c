@@ -103,18 +103,9 @@ int ui_hint(int x, int y, const char *btn, const char *label)
 
 void ui_fmt_viewers(int v, char *out, size_t cap)
 {
-    if (v >= 1000000)
-        snprintf(out, cap, "%.1f M", v / 1e6);
-    else if (v >= 10000)
-        snprintf(out, cap, "%.1f mil", v / 1e3);
-    else if (v >= 1000)
-        snprintf(out, cap, "%d.%03d", v / 1000, v % 1000);
-    else
-        snprintf(out, cap, "%d", v);
-    /* Spanish decimal comma */
-    for (char *p = out; *p; p++)
-        if (*p == '.' && v >= 10000)
-            *p = ',';
+    if(v>=1000000)snprintf(out,cap,"%.1f M",v/1e6);
+    else if(v>=10000)snprintf(out,cap,"%.1f K",v/1e3);
+    else snprintf(out,cap,"%d",v);
 }
 
 #define DPAD (SCE_CTRL_UP | SCE_CTRL_DOWN | SCE_CTRL_LEFT | SCE_CTRL_RIGHT)
