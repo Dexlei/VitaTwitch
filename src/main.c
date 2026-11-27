@@ -830,6 +830,8 @@ static void play_channel(const char *login, const char *display, const char *tit
     pp.font = ui_font;
     pp.btn_back = g_btn_back;
     pp.login = job.login;
+    pp.chat_nick = g_logged ? g_auth.login : NULL;
+    pp.chat_oauth = g_logged ? g_auth.access : NULL;
     pp.chat_on = &g_chat_on;
     int chat_before = g_chat_on;
     {
