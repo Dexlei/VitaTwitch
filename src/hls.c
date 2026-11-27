@@ -127,14 +127,17 @@ static int hls_thread(SceSize args, void *argp)
             last_new = sceKernelGetProcessTimeWide();
 
             if (s->is_ad) {
-                if (!h->in_ad)
-                    LOGI("hls: empieza un anuncio, se salta");
+                if (!h->in_ad) {
+                    LOGI("hls: SSAI break detected; filtering ad segments");
+                    demux_discontinuity(h);
+                }
                 h->in_ad = 1;
-                demux_discontinuity(h);
                 continue;
             }
-            if (h->in_ad)
-                LOGI("hls: fin del anuncio");
+            if (h->in_ad) {
+                LOGI("hls: live content resumed");
+                demux_discontinuity(h);
+            }
             h->in_ad = 0;
             if (s->discontinuity)
                 demux_discontinuity(h);
@@ -199,7 +202,7 @@ static int hls_thread(SceSize args, void *argp)
             break;
         }
         if (!got_new) {
-            if (!h->in_ad && sceKernelGetProcessTimeWide()-last_new>45000000ULL) { h->retryable=1; break; }
+            if (sceKernelGetProcessTimeWide()-last_new>(h->in_ad?180000000ULL:45000000ULL)) { h->retryable=1; break; }
             int delay=(int)(media.target_duration*500);
             if(delay<250)delay=250;
             sleep_ms_while_running(h,delay);
