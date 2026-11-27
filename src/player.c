@@ -716,14 +716,20 @@ static void draw_view(const vslot_t *frame, view_t *vw)
     if (vw->osd) {
         char line[160];
         vita2d_draw_rectangle(0, 0, AW, 64, COLOR_OSD_BG);
-        vita2d_draw_rectangle(14, 12, 54, 20, COLOR_LIVE);
-        vita2d_pgf_draw_text(f, 19, 27, COLOR_WHITE, 0.7f, vt_msg("DIRECTO"));
-        vita2d_pgf_draw_text(f, 78, 29, COLOR_WHITE, 1.05f, vw->pp->channel);
+        const char *live=vt_tr(VT_I_LIVE);
+        int badge_w=ui_text_w(0.75f,live)+20;
+        ui_round_rect(14,10,badge_w,24,6,C_RED);
+        ui_text_center(14+badge_w/2,28,C_WHITE,0.75f,live);
         int64_t buffered = pq_span(&g_pl.vq) / PTS_PER_MS;
-        snprintf(line, sizeof(line), vt_msg("%s   buffer %.1f s   descartados %d"),
-                 vw->pp->quality, buffered / 1000.0, vw->dropped);
-        int lw = vita2d_pgf_text_width(f, 0.8f, line);
-        vita2d_pgf_draw_text(f, AW - 14 - lw, 27, COLOR_GREY, 0.8f, line);
+        if(vw->pp->diagnostics)
+            snprintf(line,sizeof(line),vt_msg("%s   buffer %.1f s   descartados %d"),
+                     vw->pp->quality,buffered/1000.0,vw->dropped);
+        else snprintf(line,sizeof(line),"%s",vw->pp->quality);
+        int lw=ui_text_w(0.8f,line);
+        if(lw>AW/2)lw=AW/2;
+        ui_text_fit(AW-14-lw,28,lw,C_WHITE,0.8f,line);
+        int name_x=badge_w+26;
+        ui_text_fit(name_x,29,AW-24-lw-name_x,C_WHITE,1.05f,vw->pp->channel);
         if (vw->pp->title && vw->pp->title[0]) {
             /* single line, cut to the screen width */
             char t[200];
@@ -778,9 +784,12 @@ static void draw_view(const vslot_t *frame, view_t *vw)
         ui_text_fit(180,SCREEN_H-54,600,C_WHITE,0.95f,vw->notice);
     }
     if (vw->status) {
-        int tw = vita2d_pgf_text_width(f, 1.2f, vw->status);
-        vita2d_draw_rectangle((AW - tw) / 2 - 20, SCREEN_H / 2 - 28, tw + 40, 44, COLOR_OSD_BG);
-        vita2d_pgf_draw_text(f, (AW - tw) / 2, SCREEN_H / 2 + 4, COLOR_WHITE, 1.2f, vw->status);
+        int tw=ui_text_w(0.94f,vw->status)+54;
+        if(tw>AW-24)tw=AW-24;
+        int bx=(AW-tw)/2,by=SCREEN_H-94;
+        ui_round_rect(bx,by,tw,42,9,C_PANEL);
+        ui_spinner(bx+20,by+21,7,C_PURPLE);
+        ui_text_fit(bx+38,by+28,tw-48,C_WHITE,0.94f,vw->status);
     }
 
     vita2d_end_drawing();
