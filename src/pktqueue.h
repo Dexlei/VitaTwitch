@@ -19,8 +19,9 @@ typedef struct {
     size_t bytes;
     int max_count;
     size_t max_bytes;
-    volatile int aborted;
+    int aborted;
     pthread_mutex_t lock;
+    pthread_cond_t changed;
 } pktqueue_t;
 
 packet_t *pkt_new(const uint8_t *data, int size, int64_t pts, int64_t dts);

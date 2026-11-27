@@ -921,6 +921,12 @@ static void account_logged_in(void)
             return;
         if (g_in.pressed & SCE_CTRL_TRIANGLE) {
             LOGI("sesion cerrada por el usuario");
+            if (g_auth_checking) {
+                task_cancel(&g_auth_task);
+                task_wait(&g_auth_task);
+                g_auth_checking = 0;
+                memset(&g_auth_job, 0, sizeof(g_auth_job));
+            }
             g_logged = 0;
             memset(&g_auth, 0, sizeof(g_auth));
             sceIoRemove(AUTH_FILE);

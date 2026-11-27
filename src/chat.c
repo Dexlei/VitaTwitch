@@ -849,7 +849,7 @@ static int valid_oauth(const char *s){
 }
 void chat_start(const char *login,const char *nick,const char *oauth_token)
 {
-    if (C.running)
+    if (C.running || C.alive)
         return;
     if (!C.lock_ok) {
         pthread_mutex_init(&C.lock, NULL);
