@@ -765,7 +765,7 @@ static int chat_thread(SceSize args, void *argp)
                 if (irc_parse(start, &line) == 0) {
                     if (!strcmp(line.command, "PING")) {
                         char pong[160];
-                        snprintf(pong, sizeof(pong), "PONG :%s\r\n", line.trailing);
+                        snprintf(pong, sizeof(pong), "PONG :%.130s\r\n", line.trailing);
                         irc_send(c, pong);
                     } else if(!strcmp(line.command,"USERSTATE")){
                         if(C.oauth[0]){
