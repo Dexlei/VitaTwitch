@@ -45,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.33-playfix2"
+#define APP_VERSION   "1.33-playfix3"
 
 #define MAX_ITEMS 100
 
@@ -94,7 +94,7 @@ static const char *region_title(void){
     static const char *const labels[]={"Live languages","Idioma de directos","Idioma das lives","Langue des lives","Lingua delle live","Stream-Sprache","Язык трансляций","Bahasa siaran","Wika ng live","Pinulongan sa live","Streamtaal","Język transmisji","Yayın dili","Мова трансляцій","Streams språk","配信言語","방송 언어","直播语言","直播語言"};
     int i=vt_lang_current();return i>=0&&i<19?labels[i]:labels[0];
 }
-static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=1, g_diag=0, g_volume=100, g_remember=1;
+static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=0, g_diag=0, g_volume=100, g_remember=1;
 static unsigned long long g_auth_last_check;
 static int g_touch_manual_scroll = 0;
 
@@ -187,7 +187,7 @@ static void settings_load(void)
             ui_touch_enable(atoi(line + 6) != 0);
     }
     fclose(f);
-    if(quality_flow<2)g_auto_quality=1;
+    if(quality_flow<3)g_auto_quality=0;
 }
 
 static void settings_save(void)
@@ -200,7 +200,7 @@ static void settings_save(void)
             g_pref_quality, g_search, g_chat_on,
             vt_lang_code(vt_lang_current()), ui_touch_enabled());
     fprintf(f,"profile=%d\nauto_quality=%d\ndiag=%d\nvolume=%d\nremember=%d\n",g_profile,g_auto_quality,g_diag,g_volume,g_remember);
-    fprintf(f,"region=%s\nquality_flow=2\n",region_codes[g_region]);
+    fprintf(f,"region=%s\nquality_flow=3\n",region_codes[g_region]);
     fclose(f);
 }
 
@@ -832,12 +832,9 @@ static void play_selected(void)
     pp.has_lower=vt_profile_lower(play_list,play_count,play_list[sel])>=0;
     pp.diagnostics=g_diag;pp.volume=&g_volume;
     pp.ad_backup_url=ad_switched?NULL:ad_backup;
-    {
-        char u[160];
-        LOGI("reproducir %s en %s: %s", login, pp.quality, log_url(pp.url, u, sizeof(u)));
-    }
+    LOGI("startup: selected %s %s %dx%d %.0f fps", login, pp.quality, pp.width, pp.height, pp.fps);
     scePowerSetArmClockFrequency(vt_profile_clock(g_profile,pp.height,pp.fps));
-    LOGI("quality flow: entering player");
+    LOGI("startup: entering player");
     r = player_run(&pp, err, sizeof(err));
     LOGI("quality flow: player returned %d",r);
     scePowerSetArmClockFrequency(333);
@@ -906,6 +903,15 @@ static void play_tick(void)
 {
     unsigned p=g_in.pressed;
     if(play_state==PLAY_LAUNCH){
+        if(p&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT)){
+            play_state=PLAY_IDLE;return;
+        }
+        /* Present loading before calling the blocking player startup. */
+        vita2d_start_drawing();vita2d_clear_screen();
+        ui_spinner(SCREEN_W/2,SCREEN_H/2-32,14,C_PURPLE);
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+12,C_WHITE,1.0f,vt_tr(VT_I_LOADING));
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+42,C_GREY,0.85f,play_display);
+        frame_end();
         play_selected();
         return;
     }
@@ -936,7 +942,7 @@ static void play_tick(void)
             play_top=play_sel>=6?play_sel-5:0;
             play_armed=0;
             play_state=g_auto_quality?PLAY_LAUNCH:PLAY_CHOOSE;
-            LOGI("quality flow: %d variants; state %d",play_count,play_state);
+            LOGI("startup: %d variants; state %d; auto=%d",play_count,play_state,g_auto_quality);
             return;
         }
     }else if(play_state==PLAY_CHOOSE){
