@@ -79,10 +79,18 @@ int twitch_build_list_body(twitch_list_t kind, const char *query, char *out, siz
         return snprintf(out, cap,
             "{\"query\":\"query { currentUser { followedLiveUsers(first: 100) { edges { node { "
             USER_FIELDS " } } } } }\"}");
-    case TW_LIST_TOP:
-        return snprintf(out, cap,
-            "{\"query\":\"query { streams(first: 30) { edges { node { " STREAM_FIELDS
-            " broadcaster { login displayName profileImageURL(width: 70) } } } } }\"}");
+    case TW_LIST_TOP: {
+        /* Only a fixed set of valid GraphQL language enums can enter the query. */
+        static const char *const langs[]={"PT","EN","ES","FR","DE","IT","RU","JA","KO","ZH","ZH_HK","ID","TL","NL","PL","TR","UK","SV","AR","TH","VI","OTHER"};
+        const char *lang=NULL;
+        for(unsigned i=0;query && i<sizeof(langs)/sizeof(langs[0]);i++)
+            if(!strcmp(query,langs[i])){lang=langs[i];break;}
+        char filter[64]="";
+        if(lang)snprintf(filter,sizeof(filter),", options: {languages: [%s]}",lang);
+        return snprintf(out,cap,
+            "{\"query\":\"query { streams(first: 30%s) { edges { node { " STREAM_FIELDS
+            " broadcaster { login displayName profileImageURL(width: 70) } } } } }\"}",filter);
+    }
     case TW_LIST_SEARCH: {
         char q[256];
         if (twitch_json_escape(query ? query : "", q, sizeof(q)) < 0)
