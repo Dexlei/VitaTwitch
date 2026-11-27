@@ -25,6 +25,8 @@ jobs:
           /tmp/vt-policy-test
           gcc -std=c11 -Wall -Wextra -Isrc tests/m3u8_ad_test.c src/m3u8.c -o /tmp/vt-m3u8-ad-test
           /tmp/vt-m3u8-ad-test
+          gcc -DVT_NO_NET -std=gnu11 -Wall -Wextra -Isrc tests/twitch_region_test.c src/twitch.c src/json.c src/log.c src/i18n.c -o /tmp/vt-region-test
+          /tmp/vt-region-test
           gcc -std=gnu11 -Wall -Wextra -Werror -pthread -Isrc tests/pktqueue_test.c src/pktqueue.c -o /tmp/vt-queue-test
           /tmp/vt-queue-test
       - name: IRC message sanitization and UTF-8 security checks
