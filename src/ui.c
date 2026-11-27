@@ -121,8 +121,16 @@ int ui_touch_hit(const ui_input_t *in,int x,int y,int w,int h) {
 void ui_input_poll(ui_input_t *in)
 {
     SceCtrlData pad;
+    memset(&pad,0,sizeof(pad));
+    pad.lx=pad.ly=128;
     unsigned long long now = sceKernelGetProcessTimeWide();
-    sceCtrlPeekBufferPositive(0, &pad, 1);
+    int sampled=sceCtrlPeekBufferPositive(0,&pad,1);
+    if(sampled<=0){
+        /* No fresh controller data: retain held state and still poll touch.
+         * Never interpret uninitialized stack data as button presses. */
+        pad.buttons=in->prev;
+        pad.lx=pad.ly=128;
+    }
 
     /* left stick acts as a d-pad too */
     unsigned b = pad.buttons;
