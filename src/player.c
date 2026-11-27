@@ -858,7 +858,8 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         ret = -1;
         goto out_queues;
     }
-    if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq, vt_profile_edge(pp->profile)) < 0) {
+    if (hls_start(&pl->hls, pp->url, &pl->vq, &pl->aq, vt_profile_edge(pp->profile),
+                  pp->login,pp->chat_oauth,pp->width,pp->height,pp->fps,pp->ad_backup_url) < 0) {
         snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de descarga"));
         LOGE("%s", err);
         ret = -1;
@@ -1055,6 +1056,10 @@ int player_run(const player_params_t *pp, char *err, int errlen)
         if (vp->fatal) {
             snprintf(err, (size_t)errlen, "%s", vp->fatal_msg);
             ret = -1;
+            break;
+        }
+        if(pl->hls.finished && pp->ad_backup_url && pp->ad_backup_url[0]) {
+            ret=PLAYER_AD_SWITCH;
             break;
         }
         /* end: everything shown, or the last frames can never become due (audio
