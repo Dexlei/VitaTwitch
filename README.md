@@ -1,5 +1,62 @@
 # VitaTwitch
 
+## Experimental 1.33 branch: 19 languages, SELECT extras, touch and writable chat
+
+This independent feature branch does **not** publish a new release yet. The
+existing source is based on [VitaTwitch by Dexlei](https://github.com/Dexlei/VitaTwitch).
+The original hardware H.264/AAC playback, Twitch authentication, TS/fMP4 and
+7TV chat rendering are preserved.
+
+- SELECT opens a **native extras menu**: Account, Language, Touch on/off,
+  Chat on/off, clear thumbnail cache, About and Close.
+- **19 main UI/menu languages**: English, Spanish, Brazilian Portuguese, French,
+  Italian, German, Russian, Indonesian, Filipino, Cebuano, Dutch, Polish,
+  Turkish, Ukrainian, Swedish, Japanese, Korean, simplified Chinese and
+  traditional Chinese. The system language is detected at startup and can be
+  overridden in SELECT > Language; stored as `lang=<code>` in settings.txt.
+  The 30 core UI strings are translated in all 19 catalogs. Some **legacy
+  network error/status messages remain in Spanish** until separately reviewed.
+  PS Vita default PGF fonts may lack glyphs for CJK/Indic scripts; UI text may
+  need alternate fonts. This is a limitation, not a claim of complete glyph
+  rendering.
+- **Front touchscreen**: select tabs, open streams, scroll cards, tap search,
+  select stream quality and navigate SELECT menus. Controller navigation is
+  preserved. Touch input can be disabled in the menu; saved as `touch=0/1`.
+- **In-player SELECT menu**: toggle chat visibility, compose a message, toggle
+  information overlay, close menu or return to the home screen. Tap the live
+  chat's Write button or press R to open the composer directly.
+- **Write to Twitch chat**: only an authenticated Twitch OAuth token with
+  `chat:read` and `chat:edit` privileges can send; anonymous users remain
+  read-only. Single-threaded IRC send queue, input sanitation to prevent IRC
+  command injection, a 450-byte payload limit and a conservative 1.6-second
+  message throttle. The Vita IME remains nonblocking, preserving HLS playback.
+- **Security**: writing requires verified TLS to Twitch IRC using the bundled
+  Mozilla CA certificate store (`app0:ca/cacert.pem`). If absent, expired, or
+  validation fails, the client falls back to anonymous read-only IRC and never
+  sends the OAuth token on an unverified socket. The preexisting app's other
+  network code still has insecure TLS defaults; this is a known security
+  limitation to address separately before claiming full transport security.
+  Twitch access tokens are stored in `ux0:data/VitaTwitch/auth.txt`, as in
+  the upstream app. Do not publish this file or crash dumps.
+
+**Build instruction**: supply Mozilla CA certificate bundle at
+`assets/cacert.pem`, from [curl's Mozilla CA extract](https://curl.se/ca/).
+The experimental GitHub Actions workflow downloads it over verified HTTPS.
+CMake packages the cert only if it exists; otherwise authenticated chat cannot
+connect.
+
+The Android apps [Xtra](https://github.com/AndreyAsadchy/Xtra) and
+[ThystTV](https://github.com/tzii/ThystTV) were used as inspiration for feature
+selection (chat controls, quality panels, themes). Their Android/AGPL source was
+**not copied** into this MIT-licensed PS Vita project. VODs, clips, audio-only,
+BTTV/FFZ and chat appearance settings remain possible future separate additions.
+
+**Testing**: the GitHub Actions workflow builds and validates an experimental
+VPK and exercises host tests for translation catalogs, UTF-8/UTF-16 conversion
+and chat message sanitization. Real PS Vita tests are still required for OAuth,
+IME overlay, touch input and decoder stability.
+
+
 Cliente de directos de Twitch para PS Vita (VitaSDK). Reproduce con los decodificadores
 por hardware (H.264 + AAC), permite iniciar sesión con tu cuenta sin escribir la contraseña
 en la consola y navegar por tus canales seguidos, los más vistos y la búsqueda.

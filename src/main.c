@@ -34,6 +34,7 @@
 #include "twitch.h"
 #include "ui.h"
 #include "i18n.h"
+#include "ime_utf8.h"
 
 int _newlib_heap_size_user = 96 * 1024 * 1024;
 
@@ -42,7 +43,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.32"
+#define APP_VERSION   "1.33-dev"
 
 #define MAX_ITEMS 100
 
@@ -639,9 +640,15 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 
     SceImeDialogParam param;
     sceImeDialogParamInit(&param);
-    param.supportedLanguages = SCE_IME_LANGUAGE_ENGLISH | SCE_IME_LANGUAGE_SPANISH;
+    param.supportedLanguages =
+        SCE_IME_LANGUAGE_ENGLISH | SCE_IME_LANGUAGE_SPANISH |
+        SCE_IME_LANGUAGE_PORTUGUESE_BR | SCE_IME_LANGUAGE_FRENCH |
+        SCE_IME_LANGUAGE_GERMAN | SCE_IME_LANGUAGE_ITALIAN |
+        SCE_IME_LANGUAGE_RUSSIAN | SCE_IME_LANGUAGE_JAPANESE |
+        SCE_IME_LANGUAGE_KOREAN | SCE_IME_LANGUAGE_SIMPLIFIED_CHINESE |
+        SCE_IME_LANGUAGE_TRADITIONAL_CHINESE | SCE_IME_LANGUAGE_TURKISH;
     param.languagesForced = SCE_FALSE;
-    param.type = SCE_IME_TYPE_BASIC_LATIN;
+    param.type = SCE_IME_TYPE_DEFAULT;
     param.option = SCE_IME_OPTION_NO_AUTO_CAPITALIZATION | SCE_IME_OPTION_NO_ASSISTANCE;
     param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
     param.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
@@ -669,10 +676,7 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 
     if (res.button != SCE_IME_DIALOG_BUTTON_ENTER)
         return 0;
-    size_t n = 0;
-    for (i = 0; buf16[i] && n + 1 < cap; i++)
-        out[n++] = buf16[i] < 0x80 ? (char)buf16[i] : '?';
-    out[n] = 0;
+    size_t n = vt_utf16_to_utf8(out,cap,(const uint16_t*)buf16,128);
     /* trim */
     while (n && out[n - 1] == ' ')
         out[--n] = 0;

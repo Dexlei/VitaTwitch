@@ -13,7 +13,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(VITA_APP_NAME "VitaTwitch")
 set(VITA_TITLEID  "VTWI00001")
-set(VITA_VERSION  "01.32")
+set(VITA_VERSION  "01.33")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -std=gnu11")
 
@@ -70,6 +70,13 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
+# The authenticated IRC connection MUST verify its server TLS chain. An
+# explicitly supplied Mozilla CA bundle is packaged as app0:ca/cacert.pem.
+# Without the file, anonymous read-only chat still works; sending is disabled.
+set(VT_CERT_ASSETS "")
+if(EXISTS "${CMAKE_SOURCE_DIR}/assets/cacert.pem")
+  set(VT_CERT_ASSETS assets/cacert.pem ca/cacert.pem)
+endif()
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
@@ -77,6 +84,7 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   FILE sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
   FILE sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
   FILE sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+  ${VT_CERT_ASSETS}
 )
 
 # vita-elf-create appends ~4 KB of SCE module data right after the text
