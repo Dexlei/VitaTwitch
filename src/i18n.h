@@ -31,6 +31,8 @@ typedef enum {
   VT_I_LOGOUT,
   VT_I_TAB,
   VT_I_SEND_MESSAGE,
+  VT_I_SHOW_INFO,
+  VT_I_HIDE_INFO,
   VT_I_COUNT
 } vt_text_id;
 int vt_lang_current(void);

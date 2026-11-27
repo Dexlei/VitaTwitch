@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 int main(void) {
-  assert(VT_LANG_COUNT==19 && VT_I_COUNT==28);
+  assert(VT_LANG_COUNT==19 && VT_I_COUNT==30);
   for(int i=0;i<VT_LANG_COUNT;i++) {
     assert(vt_lang_set(i)==0);
     assert(vt_lang_current()==i);

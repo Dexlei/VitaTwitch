@@ -1025,8 +1025,8 @@ static void language_screen(void)
         if(g_in.pressed&SCE_CTRL_UP) sel=(sel+VT_LANG_COUNT-1)%VT_LANG_COUNT;
         if(g_in.pressed&SCE_CTRL_DOWN) sel=(sel+1)%VT_LANG_COUNT;
         if(g_in.touch_dy && g_in.touch_dragged) {
-            if(g_in.touch_dy>16 && first>0) first--;
-            else if(g_in.touch_dy< -16 && first<VT_LANG_COUNT-visible) first++;
+            if(g_in.touch_dy>16 && first>0) {first--;sel=first;}
+            else if(g_in.touch_dy< -16 && first<VT_LANG_COUNT-visible) {first++;sel=first;}
         }
         int choose=!!(g_in.pressed&g_btn_ok);
         if(g_in.touch_tap) {
