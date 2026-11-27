@@ -33,6 +33,7 @@
 #include "task.h"
 #include "twitch.h"
 #include "ui.h"
+#include "i18n.h"
 
 int _newlib_heap_size_user = 96 * 1024 * 1024;
 
@@ -67,6 +68,7 @@ static int g_auth_checking;
 static char g_pref_quality[32];
 static char g_search[64];
 static int g_chat_on = 1;
+static int g_touch_manual_scroll = 0;
 
 static ui_input_t g_in;
 static char g_toast[160];
@@ -75,7 +77,7 @@ static unsigned long long g_toast_until;
 /* ------------------------------------------------------------- tabs */
 
 enum { TAB_FOLLOWED, TAB_EXPLORE, TAB_SEARCH, TAB_COUNT };
-static const char *const g_tab_names[TAB_COUNT] = { "Siguiendo", "Explorar", "Buscar" };
+static const char *tab_name(int t) {return vt_tr((vt_text_id)(VT_I_FOLLOWING+t));}
 
 typedef enum { LS_EMPTY, LS_LOADING, LS_READY, LS_ERROR } list_state_t;
 
@@ -143,6 +145,10 @@ static void settings_load(void)
             snprintf(g_search, sizeof(g_search), "%s", line + 7);
         else if (!strncmp(line, "chat=", 5))
             g_chat_on = atoi(line + 5) != 0;
+        else if (!strncmp(line, "lang=", 5))
+            vt_lang_set_code(line + 5);
+        else if (!strncmp(line, "touch=", 6))
+            ui_touch_enable(atoi(line + 6) != 0);
     }
     fclose(f);
 }
@@ -153,7 +159,9 @@ static void settings_save(void)
     FILE *f = fopen(SETTINGS_FILE, "w");
     if (!f)
         return;
-    fprintf(f, "quality=%s\nsearch=%s\nchat=%d\n", g_pref_quality, g_search, g_chat_on);
+    fprintf(f, "quality=%s\nsearch=%s\nchat=%d\nlang=%s\ntouch=%d\n",
+            g_pref_quality, g_search, g_chat_on,
+            vt_lang_code(vt_lang_current()), ui_touch_enabled());
     fclose(f);
 }
 
@@ -337,14 +345,14 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
         vita2d_draw_rectangle(x, y, CARD_W, THUMB_H, C_PANEL);
         if (!s->live) {
             draw_avatar(s->avatar, s->display, x + CARD_W / 2 - 36, y + 28, 72);
-            ui_text_center(x + CARD_W / 2, y + THUMB_H - 22, C_DIM, 0.85f, "Desconectado");
+            ui_text_center(x + CARD_W / 2, y + THUMB_H - 22, C_DIM, 0.85f, vt_tr(VT_I_OFFLINE));
         } else {
             ui_text_center(x + CARD_W / 2, y + THUMB_H / 2 + 8, C_DIM, 1.0f, s->display);
         }
     }
     if (s->live) {
         ui_round_rect(x + 8, y + 8, 64, 22, 4, C_RED);
-        ui_text_center(x + 40, y + 25, C_WHITE, 0.75f, "DIRECTO");
+        ui_text_center(x + 40, y + 25, C_WHITE, 0.75f, vt_tr(VT_I_LIVE));
         ui_fmt_viewers(s->viewers, v, sizeof(v));
         snprintf(line, sizeof(line), "%s espectadores", v);
         int w = ui_text_w(0.75f, line) + 16;
@@ -378,8 +386,8 @@ static void draw_header(void)
     ui_round_rect(x - 34, 17, 24, 22, 5, C_PANEL2);
     ui_text_center(x - 22, 33, C_GREY, 0.8f, "L");
     for (int t = 0; t < TAB_COUNT; t++) {
-        int w = ui_text_w(1.0f, g_tab_names[t]);
-        ui_text(x, 36, t == g_tab ? C_WHITE : C_DIM, 1.0f, g_tab_names[t]);
+        int w = ui_text_w(1.0f, tab_name(t));
+        ui_text(x, 36, t == g_tab ? C_WHITE : C_DIM, 1.0f, tab_name(t));
         if (t == g_tab)
             vita2d_draw_rectangle(x, HEADER_H - 4, w, 4, C_PURPLE);
         x += w + 30;
@@ -397,7 +405,7 @@ static void draw_header(void)
         if (g_auth_checking)
             ui_spinner(SCREEN_W - 20 - 32 - 24 - w, 28, 7, C_GREY);
     } else {
-        const char *l = "Iniciar sesion";
+        const char *l = vt_tr(VT_I_MENU);
         int w = ui_text_w(0.85f, l);
         int bw = ui_text_w(0.8f, "SELECT") + 12;
         ui_round_rect(SCREEN_W - 20 - w - bw - 8, 17, bw, 22, 5, C_PURPLE);
@@ -414,16 +422,16 @@ static void draw_footer(void)
     vita2d_draw_rectangle(0, FOOTER_Y, SCREEN_W, 1, C_PANEL2);
     int x = 20, y = FOOTER_Y + 26;
     if (g_tab == TAB_SEARCH && tb->sel < 0)
-        snprintf(ok, sizeof(ok), "Escribir busqueda");
+        snprintf(ok, sizeof(ok), "%s", vt_tr(VT_I_SEARCH));
     else
-        snprintf(ok, sizeof(ok), "Ver directo");
+        snprintf(ok, sizeof(ok), "%s", vt_tr(VT_I_PLAY));
     x += ui_hint(x, y, g_ok_name, ok);
-    x += ui_hint(x, y, "\xE2\x96\xB3" /* triangle */, "Actualizar");
+    x += ui_hint(x, y, "\xE2\x96\xB3" /* triangle */, vt_tr(VT_I_REFRESH));
     if (g_tab == TAB_SEARCH)
         x += ui_hint(x, y, "\xE2\x96\xA1" /* square */, "Ir al canal exacto");
-    x += ui_hint(x, y, "L/R", "Pestana");
-    x += ui_hint(x, y, "SELECT", "Cuenta");
-    ui_hint(x, y, "START", "Salir");
+    x += ui_hint(x, y, "L/R", vt_tr(VT_I_TAB));
+    x += ui_hint(x, y, "SELECT", vt_tr(VT_I_MENU));
+    ui_hint(x, y, "START", vt_tr(VT_I_EXIT));
 }
 
 static void draw_center_msg(const char *title, const char *msg, int top)
@@ -442,8 +450,15 @@ static void draw_home(void)
 
     vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, C_BG);
 
-    /* scroll so the selected row stays visible */
-    if (tb->sel >= 0) {
+    /* Scroll follows d-pad selection; manual touch scrolling may override. */
+    if (g_touch_manual_scroll) {
+        int rows = (tb->count+COLS-1)/COLS;
+        float total=(float)(rows*ROW_PITCH);
+        float max=total-(FOOTER_Y-top-8);
+        if(max<0)max=0;
+        if(tb->scroll>max)tb->scroll=max;
+        if(tb->scroll<0)tb->scroll=0;
+    } else if (tb->sel >= 0) {
         float row_y = (float)(tb->sel / COLS) * ROW_PITCH;
         float view_h = (float)(FOOTER_Y - top - 8);
         float target = tb->scroll;
@@ -503,7 +518,7 @@ static void draw_home(void)
         if (g_search[0])
             ui_text(GRID_X + 48, y + 29, C_WHITE, 1.0f, g_search);
         else
-            ui_text(GRID_X + 48, y + 29, C_DIM, 1.0f, "Buscar canales...");
+            ui_text(GRID_X + 48, y + 29, C_DIM, 1.0f, vt_tr(VT_I_SEARCH));
     }
 
     if (tb->busy && tb->count > 0)
@@ -695,6 +710,13 @@ static int quality_modal(const char *display, m3u8_variant_t **list, int n, int 
         if (g_in.pressed & SCE_CTRL_DOWN) sel = (sel + 1) % n;
         if (g_in.pressed & g_btn_ok) return sel;
         if (g_in.pressed & g_btn_back) return -1;
+        if (g_in.touch_tap) {
+            int box_h = 120 + vis * row_h + (fallback ? 26 : 0);
+            int yy = (SCREEN_H-box_h)/2 + 84 + (fallback ? 26 : 0);
+            for (int k=0;k<vis;k++)
+                if (ui_touch_hit(&g_in,(SCREEN_W-w)/2+16,yy+k*row_h,w-32,row_h-6))
+                    return top+k;
+        }
         if (sel < top) top = sel;
         if (sel >= top + vis) top = sel - vis + 1;
 
@@ -704,7 +726,7 @@ static int quality_modal(const char *display, m3u8_variant_t **list, int n, int 
         int x, y;
         draw_modal_box(w, h, &x, &y);
         ui_text_fit(x + 28, y + 42, w - 56, C_WHITE, 1.15f, title);
-        ui_text(x + 28, y + 68, C_GREY, 0.85f, "Elige la calidad del directo");
+        ui_text(x + 28, y + 68, C_GREY, 0.85f, vt_tr(VT_I_QUALITY));
         int ly = y + 84;
         if (fallback) {
             ui_text(x + 28, ly + 14, C_DIM, 0.75f, "Este canal no ofrece 480p/720p: se muestran las disponibles.");
@@ -721,8 +743,8 @@ static int quality_modal(const char *display, m3u8_variant_t **list, int n, int 
                      list[i]->fps, list[i]->bandwidth / 1e6);
             ui_text(x + 170, ry + 29, i == sel ? C_WHITE : C_GREY, 0.85f, info);
         }
-        ui_hint(x + 28, y + h - 18, g_ok_name, "Reproducir");
-        ui_hint(x + 200, y + h - 18, g_back_name, "Volver");
+        ui_hint(x + 28, y + h - 18, g_ok_name, vt_tr(VT_I_PLAY));
+        ui_hint(x + 200, y + h - 18, g_back_name, vt_tr(VT_I_BACK));
         frame_end();
     }
 }
@@ -989,6 +1011,94 @@ static void account_screen(void)
         account_login();
 }
 
+
+/* ----------------------------------------------------- SELECT extras menu */
+static void language_screen(void)
+{
+    int sel=vt_lang_current(), first=sel>7?sel-7:0;
+    const int x=198,y=50,w=564,h=440,row=44,visible=8;
+    for(;;) {
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(g_btn_back|SCE_CTRL_SELECT)) return;
+        if(g_in.pressed&SCE_CTRL_UP) sel=(sel+VT_LANG_COUNT-1)%VT_LANG_COUNT;
+        if(g_in.pressed&SCE_CTRL_DOWN) sel=(sel+1)%VT_LANG_COUNT;
+        if(g_in.touch_dy && g_in.touch_dragged) {
+            if(g_in.touch_dy>16 && first>0) first--;
+            else if(g_in.touch_dy< -16 && first<VT_LANG_COUNT-visible) first++;
+        }
+        int choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.touch_tap) {
+            for(int k=0;k<visible;k++)
+                if(first+k<VT_LANG_COUNT && ui_touch_hit(&g_in,x+16,y+62+k*row,w-32,row-3)) {
+                    sel=first+k;choose=1;break;
+                }
+        }
+        if(choose) {
+            vt_lang_set(sel);
+            settings_save();
+            LOGI("ui language selected: %s",vt_lang_code(sel));
+            return;
+        }
+        if(sel<first) first=sel;
+        if(sel>=first+visible) first=sel-visible+1;
+        frame_begin();
+        draw_home();
+        int bx,by; draw_modal_box(w,h,&bx,&by);
+        ui_text(x+25,y+42,C_WHITE,1.25f,vt_tr(VT_I_LANGUAGE));
+        for(int k=0;k<visible;k++){
+            int i=first+k; if(i>=VT_LANG_COUNT)break;
+            if(i==sel) ui_round_rect(x+12,y+60+k*row,w-24,row-3,6,C_PURPLE);
+            ui_text_fit(x+30,y+90+k*row,w-60,C_WHITE,0.94f,vt_lang_name(i));
+        }
+        ui_text(x+24,y+h-13,C_GREY,0.7f,"Up/Down  |  X  |  Back");
+        frame_end();
+    }
+}
+static void extras_menu(void)
+{
+    /* All entries share the same hit boxes for touch and controller use. */
+    const int x=195,y=52,w=570,h=440,row=48,count=7;
+    int sel=0;
+    for(;;) {
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(SCE_CTRL_SELECT|g_btn_back))return;
+        if(g_in.pressed&SCE_CTRL_UP)sel=(sel+count-1)%count;
+        if(g_in.pressed&SCE_CTRL_DOWN)sel=(sel+1)%count;
+        int choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.touch_tap){
+            for(int i=0;i<count;i++)
+                if(ui_touch_hit(&g_in,x+14,y+68+i*row,w-28,row-4)){sel=i;choose=1;break;}
+            if(!choose && !ui_touch_hit(&g_in,x,y,w,h))return;
+        }
+        if(choose){
+            switch(sel){
+                case 0: account_screen();break;
+                case 1: language_screen();break;
+                case 2: ui_touch_enable(!ui_touch_enabled());settings_save();break;
+                case 3: g_chat_on=!g_chat_on;settings_save();break;
+                case 4: img_clear();toast("Thumbnail cache cleared");break;
+                case 5: modal_message("VitaTwitch", "19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork.");break;
+                case 6:return;
+            }
+        }
+        frame_begin();draw_home();
+        int bx,by;draw_modal_box(w,h,&bx,&by);
+        ui_text(x+26,y+41,C_WHITE,1.2f,vt_tr(VT_I_SETTINGS));
+        for(int i=0;i<count;i++){
+            int yy=y+68+i*row;
+            if(sel==i)ui_round_rect(x+14,yy,w-28,row-4,7,C_PURPLE);
+            const char *label=i==0?vt_tr(VT_I_ACCOUNT):i==1?vt_tr(VT_I_LANGUAGE):
+                i==2?vt_tr(VT_I_TOUCH):i==3?vt_tr(VT_I_CHAT):
+                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):vt_tr(VT_I_CLOSE);
+            ui_text_fit(x+32,yy+31,w-220,C_WHITE,0.97f,label);
+            if(i==1) ui_text_fit(x+w-182,yy+31,157,C_GREY,0.76f,vt_lang_code(vt_lang_current()));
+            if(i==2||i==3)ui_text(x+w-114,yy+31,C_WHITE,0.83f,
+                (i==2?ui_touch_enabled():g_chat_on)?vt_tr(VT_I_ON):vt_tr(VT_I_OFF));
+        }
+        frame_end();
+    }
+}
+
 /* ------------------------------------------------------------- init */
 
 static void log_header(void)
@@ -1045,6 +1155,7 @@ static void init_system(void)
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, (int *)&cfg.language);
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, (int *)&cfg.enterButtonAssign);
     sceCommonDialogSetConfigParam(&cfg);
+    vt_lang_auto((int)cfg.language); /* saved lang= still overrides this */
     if (cfg.enterButtonAssign == SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE) {
         g_btn_ok = SCE_CTRL_CIRCLE;
         g_btn_back = SCE_CTRL_CROSS;
@@ -1053,6 +1164,8 @@ static void init_system(void)
     }
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    if (sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT,SCE_TOUCH_SAMPLING_STATE_START)<0)
+        LOGW("touch: failed to enable front panel sampling");
 
     SceRtcTick tick;
     sceRtcGetCurrentTick(&tick);
@@ -1128,13 +1241,50 @@ int main(void)
             break;
         if (p & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
             g_tab = (g_tab + (p & SCE_CTRL_RTRIGGER ? 1 : TAB_COUNT - 1)) % TAB_COUNT;
+            g_touch_manual_scroll=0;
             if (g_tabs[g_tab].state == LS_EMPTY || g_tabs[g_tab].state == LS_ERROR)
                 tab_load(g_tab);
             continue;
         }
         if (p & SCE_CTRL_SELECT) {
-            account_screen();
+            extras_menu();
             continue;
+        }
+        if(g_in.touch_tap && g_in.touch_y<HEADER_H) {
+            if(g_in.touch_x>745) {extras_menu();continue;}
+            int tx=250;
+            for(int t=0;t<TAB_COUNT;t++){
+                int tw=ui_text_w(1.0f,tab_name(t));
+                if(g_in.touch_x>=tx-7 && g_in.touch_x<tx+tw+12){
+                    g_tab=t;g_touch_manual_scroll=0;
+                    if(g_tabs[t].state==LS_EMPTY||g_tabs[t].state==LS_ERROR)tab_load(t);
+                    break;
+                }
+                tx+=tw+30;
+            }
+            continue;
+        }
+        if(g_in.touch_down && g_in.touch_dragged && g_in.touch_y>=grid_top(g_tab)
+           && g_in.touch_y<FOOTER_Y){
+            g_touch_manual_scroll=1;
+            tb->scroll-=g_in.touch_dy;
+        }
+        if(g_in.touch_tap && g_in.touch_y>=HEADER_H && g_in.touch_y<FOOTER_Y){
+            int top=grid_top(g_tab);
+            if(g_tab==TAB_SEARCH && g_in.touch_y<top){
+                tb->sel=-1;g_touch_manual_scroll=0;open_selected();continue;
+            }
+            int yy=g_in.touch_y-top+(int)tb->scroll;
+            int xx=g_in.touch_x-GRID_X;
+            if(yy>=0 && xx>=0 && xx<COLS*(CARD_W+GAP_X)){
+                int col=xx/(CARD_W+GAP_X), row=yy/ROW_PITCH;
+                if(xx%(CARD_W+GAP_X)<CARD_W && yy%ROW_PITCH<CARD_H){
+                    int index=row*COLS+col;
+                    if(tb->state==LS_READY&&index>=0&&index<tb->count){
+                        tb->sel=index;g_touch_manual_scroll=0;open_selected();continue;
+                    }
+                }
+            }
         }
         if (p & SCE_CTRL_TRIANGLE) {
             img_clear(); /* thumbnails are refreshed by Twitch every few minutes */
@@ -1150,6 +1300,8 @@ int main(void)
         }
 
         /* grid navigation */
+        if(p&(SCE_CTRL_UP|SCE_CTRL_DOWN|SCE_CTRL_LEFT|SCE_CTRL_RIGHT))
+            g_touch_manual_scroll=0;
         int n = tb->state == LS_READY ? tb->count : 0;
         int min_sel = g_tab == TAB_SEARCH ? -1 : 0;
         if (p & SCE_CTRL_RIGHT && tb->sel >= 0 && tb->sel + 1 < n) tb->sel++;
