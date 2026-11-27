@@ -60,6 +60,9 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define HEADER_H  56
 #define FOOTER_Y  506
 #define SEARCH_H  44
+#define TAB_X     230
+#define TAB_STEP  165
+#define TAB_W     156
 
 static unsigned g_btn_ok = SCE_CTRL_CROSS, g_btn_back = SCE_CTRL_CIRCLE;
 static const char *g_ok_name = "X", *g_back_name = "O";
@@ -344,10 +347,11 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
 {
     char line[256], v[32];
 
-    if (selected) {
-        ui_round_rect(x - 6, y - 6, CARD_W + 12, CARD_H + 10, 8, C_PANEL);
-        ui_frame(x, y, CARD_W, THUMB_H, 3, C_PURPLE);
-    }
+    /* TV-inspired full-card focus, without scaling hitboxes or textures. */
+    ui_round_rect(x - 5, y - 5, CARD_W + 10, CARD_H + 10, 10,
+                  selected ? C_PURPLE : C_PANEL);
+    ui_round_rect(x - 2, y - 2, CARD_W + 4, CARD_H + 4, 8,
+                  selected ? C_PANEL2 : C_SURFACE);
 
     /* thumbnail */
     vita2d_texture *tex = s->live ? img_get(s->preview) : NULL;
@@ -363,20 +367,24 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
         }
     }
     if (s->live) {
-        ui_round_rect(x + 8, y + 8, 64, 22, 4, C_RED);
-        ui_text_center(x + 40, y + 25, C_WHITE, 0.75f, vt_tr(VT_I_LIVE));
+        const char *live=vt_tr(VT_I_LIVE);
+        int live_w=ui_text_w(0.75f,live)+24;
+        if(live_w> CARD_W-16)live_w=CARD_W-16;
+        ui_round_rect(x+8,y+8,live_w,24,6,C_RED);
+        ui_text_center(x+8+live_w/2,y+25,C_WHITE,0.75f,live);
         ui_fmt_viewers(s->viewers, v, sizeof(v));
         snprintf(line, sizeof(line), vt_msg("%s espectadores"), v);
         int w = ui_text_w(0.75f, line) + 16;
-        ui_round_rect(x + 8, y + THUMB_H - 30, w, 22, 4, C_SHADE);
-        ui_text(x + 16, y + THUMB_H - 13, C_WHITE, 0.75f, line);
+        if(w>CARD_W-16)w=CARD_W-16;
+        ui_round_rect(x+CARD_W-w-8,y+THUMB_H-30,w,22,5,C_SHADE);
+        ui_text_fit(x+CARD_W-w,y+THUMB_H-13,w-16,C_WHITE,0.75f,line);
     }
 
     /* text */
     int ty = y + THUMB_H + 10;
     draw_avatar(s->avatar, s->display, x, ty, 36);
     ui_clean_text(s->live && s->title[0] ? s->title : s->display, line, sizeof(line));
-    ui_text_fit(x + 46, ty + 15, CARD_W - 46, selected ? C_WHITE : RGBA8(220, 220, 225, 255), 0.85f, line);
+    ui_text_fit(x+46,ty+15,CARD_W-50,C_WHITE,0.88f,line);
     char second[160];
     snprintf(second, sizeof(second), "%s%s%s", s->display, s->game[0] ? "  -  " : "", s->game[0] ? s->game : "");
     ui_clean_text(second, line, sizeof(line));
@@ -393,36 +401,33 @@ static void draw_header(void)
     ui_text_center(36, 36, C_WHITE, 1.0f, "VT");
     ui_text(62, 37, C_WHITE, 1.2f, "VitaTwitch");
 
-    /* tabs */
-    int x = 250;
-    ui_round_rect(x - 34, 17, 24, 22, 5, C_PANEL2);
-    ui_text_center(x - 22, 33, C_GREY, 0.8f, "L");
-    for (int t = 0; t < TAB_COUNT; t++) {
-        int w = ui_text_w(1.0f, tab_name(t));
-        ui_text(x, 36, t == g_tab ? C_WHITE : C_DIM, 1.0f, tab_name(t));
-        if (t == g_tab)
-            vita2d_draw_rectangle(x, HEADER_H - 4, w, 4, C_PURPLE);
-        x += w + 30;
+    /* Fixed TV-style tab geometry: labels cannot collide with account. */
+    ui_text_center(TAB_X-16,35,C_GREY,0.82f,"L");
+    for(int t=0;t<TAB_COUNT;t++){
+        int x=TAB_X+t*TAB_STEP;
+        int active=t==g_tab;
+        ui_round_rect(x,9,TAB_W,38,10,active?C_PURPLE:C_PANEL);
+        const char *label=tab_name(t);
+        float scale=ui_text_w(1.0f,label)>TAB_W-20?0.78f:1.0f;
+        int tw=ui_text_w(scale,label);
+        if(tw>TAB_W-20)tw=TAB_W-20;
+        ui_text_fit(x+(TAB_W-tw)/2,35,TAB_W-20,active?C_WHITE:C_GREY,scale,label);
     }
-    ui_round_rect(x - 8, 17, 24, 22, 5, C_PANEL2);
-    ui_text_center(x + 4, 33, C_GREY, 0.8f, "R");
+    ui_text_center(735,35,C_GREY,0.82f,"R");
 
     /* account chip */
     if (g_logged) {
         char name[80];
         ui_clean_text(g_auth.display[0] ? g_auth.display : g_auth.login, name, sizeof(name));
-        int w = ui_text_w(0.9f, name);
-        draw_avatar(g_auth.avatar, name, SCREEN_W - 20 - 32, 12, 32);
-        ui_text(SCREEN_W - 20 - 32 - 10 - w, 34, C_WHITE, 0.9f, name);
-        if (g_auth_checking)
-            ui_spinner(SCREEN_W - 20 - 32 - 24 - w, 28, 7, C_GREY);
+        ui_round_rect(755,8,185,40,10,C_PANEL);
+        draw_avatar(g_auth.avatar,name,902,12,32);
+        ui_text_fit(766,34,126,C_WHITE,0.84f,name);
+        if(g_auth_checking)ui_spinner(758,28,5,C_GREY);
     } else {
-        const char *l = vt_tr(VT_I_MENU);
-        int w = ui_text_w(0.85f, l);
-        int bw = ui_text_w(0.8f, "SELECT") + 12;
-        ui_round_rect(SCREEN_W - 20 - w - bw - 8, 17, bw, 22, 5, C_PURPLE);
-        ui_text(SCREEN_W - 20 - w - bw - 2, 33, C_WHITE, 0.8f, "SELECT");
-        ui_text(SCREEN_W - 20 - w, 34, C_WHITE, 0.85f, l);
+        ui_round_rect(755,8,185,40,10,C_PANEL);
+        ui_round_rect(763,17,62,22,5,C_PURPLE_D);
+        ui_text_center(794,33,C_WHITE,0.72f,"SELECT");
+        ui_text_fit(834,34,96,C_WHITE,0.85f,vt_tr(VT_I_MENU));
     }
 }
 
@@ -1308,15 +1313,13 @@ int main(void)
         }
         if(g_in.touch_tap && g_in.touch_y<HEADER_H) {
             if(g_in.touch_x>745) {extras_menu();continue;}
-            int tx=250;
             for(int t=0;t<TAB_COUNT;t++){
-                int tw=ui_text_w(1.0f,tab_name(t));
-                if(g_in.touch_x>=tx-7 && g_in.touch_x<tx+tw+12){
+                int tx=TAB_X+t*TAB_STEP;
+                if(g_in.touch_x>=tx && g_in.touch_x<tx+TAB_W){
                     g_tab=t;g_touch_manual_scroll=0;
                     if(g_tabs[t].state==LS_EMPTY||g_tabs[t].state==LS_ERROR)tab_load(t);
                     break;
                 }
-                tx+=tw+30;
             }
             continue;
         }
