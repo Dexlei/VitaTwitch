@@ -26,7 +26,8 @@ typedef struct {
     char *backup_url; /* caller-owned M3U8_URL_MAX buffer, NULL disables probing */
     char error[128];
 
-    SceUID thread;
+    pthread_t thread;
+    int thread_started;
     ts_demux_t demux;
     mp4_demux_t mp4;                  /* fMP4 streams (#EXT-X-MAP), e.g. Enhanced Broadcasting */
     char map_loaded[M3U8_URL_MAX];    /* init segment currently in mp4 */

@@ -71,9 +71,10 @@ static void demux_discontinuity(hls_t *h)
     mp4_demux_discontinuity(&h->mp4);
 }
 
-static int hls_thread(SceSize args, void *argp)
+static void *hls_thread(void *argp)
 {
-    hls_t *h = *(hls_t **)argp;
+    hls_t *h = argp;
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1);
     CURL *c = http_new();
     buf_t pl = {0}, seg = {0};
     static m3u8_media_t media; /* large; only one downloader runs at a time */
@@ -85,7 +86,7 @@ static int hls_thread(SceSize args, void *argp)
     if (!c) {
         snprintf(h->error, sizeof(h->error), vt_msg("No se pudo iniciar curl"));
         h->finished = 1;
-        return sceKernelExitDeleteThread(0);
+        return NULL;
     }
 
     while (h->running) {
@@ -226,7 +227,7 @@ done:
     buf_free(&seg);
     http_free(c);
     h->finished = 1;
-    return sceKernelExitDeleteThread(0);
+    return NULL;
 }
 
 int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, int live_edge,
@@ -245,22 +246,20 @@ int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, i
     mp4_demux_init(&h->mp4, on_es, h);
 
     /* curl + OpenSSL need a generous stack */
-    h->thread = sceKernelCreateThread("vt_hls", hls_thread, 0x10000100, 512 * 1024, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
-    if (h->thread < 0) {
+    pthread_attr_t attr;
+    int rc = pthread_attr_init(&attr);
+    if (rc == 0) {
+        rc = pthread_attr_setstacksize(&attr, 512 * 1024);
+        if (rc == 0) rc = pthread_create(&h->thread, &attr, hls_thread, h);
+        pthread_attr_destroy(&attr);
+    }
+    if (rc != 0) {
         h->running = 0;
         ts_demux_free(&h->demux);
         mp4_demux_free(&h->mp4);
         return -1;
     }
-    hls_t *self = h;
-    if (sceKernelStartThread(h->thread, sizeof(self), &self) < 0) {
-        sceKernelDeleteThread(h->thread);
-        h->thread = -1;
-        h->running = 0;
-        ts_demux_free(&h->demux);
-        mp4_demux_free(&h->mp4);
-        return -1;
-    }
+    h->thread_started = 1;
     return 0;
 }
 
@@ -270,8 +269,9 @@ void hls_stop(hls_t *h)
     h->abort_req = 1;
     pq_abort(h->vq);
     pq_abort(h->aq);
-    if (h->thread >= 0) {
-        while (!h->finished) sceKernelDelayThread(10000);
+    if (h->thread_started) {
+        pthread_join(h->thread, NULL);
+        h->thread_started = 0;
     }
     ts_demux_free(&h->demux);
     mp4_demux_free(&h->mp4);

@@ -102,16 +102,19 @@ typedef struct {
     volatile int audio_buffering;
     volatile int audio_failed;
     volatile int rebuffers;     /* times audio ran dry and had to buffer again */
-    SceUID audio_thread;
+    pthread_t audio_thread;
+    int audio_started;
 } player_t;
 
 static player_t g_pl;
 
 /* ------------------------------------------------------------ audio thread */
 
-static int audio_thread(SceSize args, void *argp)
+static void *audio_thread(void *argp)
 {
-    player_t *pl = *(player_t **)argp;
+    player_t *pl = argp;
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_2);
+    LOGI("startup: audio worker entered");
     static int16_t silence[AUDIO_GRAIN * 2];
     static int16_t accum[AUDIO_GRAIN * 2 * 4];
     int accum_frames = 0;
@@ -282,7 +285,7 @@ static int audio_thread(SceSize args, void *argp)
     free(es);
     free(pcm);
     pl->audio_done = 1;
-    return sceKernelExitDeleteThread(0);
+    return NULL;
 }
 
 /* ---------------------------------------------------------- video decoder */
@@ -423,7 +426,7 @@ typedef struct {
     volatile int shown_any;      /* lag checks start once something is on screen */
     volatile int fatal;
     char fatal_msg[128];
-    SceUID thread;
+    pthread_t thread;
 
     /* stats, reset by the presenter every interval */
     volatile int st_aus, st_pics, st_multi, st_errors, st_undecoded, st_chat_skip, st_idr_jumps;
@@ -441,16 +444,24 @@ static int64_t pic_pts(const SceAvcdecPicture *pic)
     return (int64_t)(((uint64_t)pic->info.pts.upper << 32) | pic->info.pts.lower);
 }
 
-static int vdec_thread(SceSize args, void *argp)
+static void *vdec_thread(void *argp)
 {
     player_t *pl = &g_pl;
-    vpipe_t *vp = &g_vp;
+    vpipe_t *vp = argp;
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1);
+    LOGI("startup: video worker entered");
     vdec_t *v = vp->v;
-    int skip_to_idr = 0, consecutive_err = 0;
+    int skip_to_idr = 0, consecutive_err = 0, first_queue = 1;
     int elm = DEC_PICS; /* pictures offered per call; 1 if the firmware rejects more */
-    (void)args; (void)argp;
+    if (!v || !vp->pp || vp->nslot < DEC_PICS + 1) {
+        snprintf(vp->fatal_msg, sizeof(vp->fatal_msg), "Invalid video pipeline");
+        vp->fatal = 1;
+        vp->done = 1;
+        return NULL;
+    }
 
-    while (vp->running) {
+    LOGI("startup: video worker before first lock");
+    while (vp->running && !vp->fatal) {
         /* reserve DEC_PICS free textures (back-pressure when the ring is full) */
         int fr[DEC_PICS], nf = 0;
         pthread_mutex_lock(&vp->lock);
@@ -466,8 +477,11 @@ static int vdec_thread(SceSize args, void *argp)
             continue;
         }
 
+        if (first_queue) LOGI("startup: video worker first queue wait");
         packet_t *p = pq_get(&pl->vq, 20);
+        if (first_queue) { LOGI("startup: video worker queue wait returned"); first_queue = 0; }
         int skip = 0;
+        if (p && (!p->data || p->size <= 0)) { pkt_free(p); p = NULL; }
         if (p) {
             int idr = 0, disposable = 0;
             au_info(p->data, p->size, &idr, &disposable);
@@ -548,6 +562,8 @@ static int vdec_thread(SceSize args, void *argp)
             au.dts.upper = au.dts.lower = 0xFFFFFFFF;
         }
 
+        if (vp->st_aus == 0 && vp->total_pics == 0 && vp->total_errors == 0)
+            LOGI("startup: first AVC decode, bytes=%d", p->size);
         uint64_t t0 = sceKernelGetProcessTimeWide();
         int r = sceAvcdecDecode(&v->ctrl, &au, &arr);
         uint64_t dt = sceKernelGetProcessTimeWide() - t0;
@@ -605,7 +621,7 @@ static int vdec_thread(SceSize args, void *argp)
         pthread_mutex_unlock(&vp->lock);
     }
     vp->done = 1;
-    return sceKernelExitDeleteThread(0);
+    return NULL;
 }
 
 static void vpipe_free(vpipe_t *vp)
@@ -665,12 +681,14 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
 
     vp->running = 1;
     LOGI("startup: create video thread");
-    vp->thread = sceKernelCreateThread("vt_vdec", vdec_thread, 0x10000100 - 10, 64 * 1024, 0,
-                                       SCE_KERNEL_CPU_MASK_USER_1, NULL);
-    LOGI("startup: video thread create result=0x%08X", (unsigned)vp->thread);
-    int start_rc = vp->thread < 0 ? vp->thread : sceKernelStartThread(vp->thread, 0, NULL);
-    if (start_rc < 0) {
-        if (vp->thread >= 0) sceKernelDeleteThread(vp->thread);
+    pthread_attr_t attr;
+    int start_rc = pthread_attr_init(&attr);
+    if (start_rc == 0) {
+        start_rc = pthread_attr_setstacksize(&attr, 128 * 1024);
+        if (start_rc == 0) start_rc = pthread_create(&vp->thread, &attr, vdec_thread, vp);
+        pthread_attr_destroy(&attr);
+    }
+    if (start_rc != 0) {
         snprintf(err, (size_t)errlen, vt_msg("No se pudo crear el hilo de video"));
         LOGE("video: %s (0x%08X)", err, (unsigned)start_rc);
         vp->running = 0;
@@ -684,8 +702,7 @@ static int vpipe_start(vpipe_t *vp, vdec_t *v, const player_params_t *pp, char *
 static void vpipe_stop(vpipe_t *vp)
 {
     vp->running = 0;
-    for (int i = 0; i < 300 && !vp->done; i++) /* pq_get times out every 20 ms */
-        sceKernelDelayThread(10000);
+    pthread_join(vp->thread, NULL);
 }
 
 /* ---------------------------------------------------------------- drawing */
@@ -878,9 +895,20 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     }
 
     LOGI("startup: decoder ready; initialize video queue");
-    pq_init(&pl->vq, 900, 24 * 1024 * 1024);
+    if (pq_init(&pl->vq, 900, 24 * 1024 * 1024) != 0) {
+        snprintf(err, (size_t)errlen, "Video queue initialization failed");
+        vdec_close(&vdec);
+        pthread_mutex_destroy(&pl->clock.lock);
+        return -1;
+    }
     LOGI("startup: initialize audio queue");
-    pq_init(&pl->aq, 1500, 2 * 1024 * 1024);
+    if (pq_init(&pl->aq, 1500, 2 * 1024 * 1024) != 0) {
+        snprintf(err, (size_t)errlen, "Audio queue initialization failed");
+        pq_destroy(&pl->vq);
+        vdec_close(&vdec);
+        pthread_mutex_destroy(&pl->clock.lock);
+        return -1;
+    }
     LOGI("startup: queues ready; start video pipeline");
 
     if (vpipe_start(vp, &vdec, pp, err, errlen) < 0) {
@@ -902,18 +930,17 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     LOGI("startup: HLS thread started; start audio thread");
     pl->audio_running = 1;
     /* audio on core 2: it must never preempt the drawing thread on core 0 */
-    pl->audio_thread = sceKernelCreateThread("vt_audio", audio_thread, 100, 64 * 1024, 0,
-                                             SCE_KERNEL_CPU_MASK_USER_2, NULL);
-    if (pl->audio_thread >= 0) {
-        player_t *self = pl;
-        if (sceKernelStartThread(pl->audio_thread, sizeof(self), &self) < 0) {
-            sceKernelDeleteThread(pl->audio_thread);
-            pl->audio_thread = -1;
-            pl->audio_done = 1;
-            pl->audio_failed = 1;
-        }
-    } else {
-        LOGE("audio: no se pudo crear el hilo (0x%08X)", (unsigned)pl->audio_thread);
+    pthread_attr_t audio_attr;
+    int audio_rc = pthread_attr_init(&audio_attr);
+    if (audio_rc == 0) {
+        audio_rc = pthread_attr_setstacksize(&audio_attr, 128 * 1024);
+        if (audio_rc == 0) audio_rc = pthread_create(&pl->audio_thread, &audio_attr, audio_thread, pl);
+        pthread_attr_destroy(&audio_attr);
+    }
+    if (audio_rc == 0) pl->audio_started = 1;
+    else {
+        LOGE("audio: worker creation failed (%d)", audio_rc);
+        pl->audio_running = 0;
         pl->audio_done = 1;
         pl->audio_failed = 1;
     }
@@ -1223,8 +1250,7 @@ int player_run(const player_params_t *pp, char *err, int errlen)
     chat_stop();
     hls_stop(&pl->hls);
     pl->audio_running = 0;
-    for (int i = 0; i < 300 && !pl->audio_done; i++)
-        sceKernelDelayThread(10000);
+    if (pl->audio_started) pthread_join(pl->audio_thread, NULL);
     vpipe_free(vp);
 
 out_queues:

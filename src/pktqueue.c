@@ -33,13 +33,16 @@ void pkt_free(packet_t *p)
     free(p);
 }
 
-void pq_init(pktqueue_t *q, int max_count, size_t max_bytes)
+int pq_init(pktqueue_t *q, int max_count, size_t max_bytes)
 {
     memset(q, 0, sizeof(*q));
     q->max_count = max_count;
     q->max_bytes = max_bytes;
-    pthread_mutex_init(&q->lock, NULL);
-    pthread_cond_init(&q->changed, NULL);
+    int rc = pthread_mutex_init(&q->lock, NULL);
+    if (rc != 0) return rc;
+    rc = pthread_cond_init(&q->changed, NULL);
+    if (rc != 0) pthread_mutex_destroy(&q->lock);
+    return rc;
 }
 
 void pq_flush(pktqueue_t *q)
