@@ -36,6 +36,7 @@ add_executable(${PROJECT_NAME}
   src/chat.c
   src/chat_view.c
   src/i18n.c
+  src/ime_utf8.c
   src/mp4_demux.c
 )
 
