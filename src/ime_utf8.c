@@ -20,7 +20,8 @@ size_t vt_utf16_to_utf8(char *dst,size_t cap,const uint16_t *src,size_t max_unit
             else cp='?';
         }else if(cp>=0xdc00&&cp<=0xdfff)cp='?';
         size_t nn=emit_utf8(dst,cap,n,cp);
-        if(nn==n)break;n=nn;
+        if(nn==n)break;
+        n=nn;
     }
     dst[n]=0;return n;
 }
