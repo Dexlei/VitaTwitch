@@ -10,6 +10,7 @@
 #include <psp2/apputil.h>
 #include <psp2/common_dialog.h>
 #include <psp2/ctrl.h>
+#include <psp2/touch.h>
 #include <psp2/ime_dialog.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
@@ -33,6 +34,9 @@
 #include "task.h"
 #include "twitch.h"
 #include "ui.h"
+#include "i18n.h"
+#include "ime_utf8.h"
+#include "playback_policy.h"
 
 int _newlib_heap_size_user = 96 * 1024 * 1024;
 
@@ -41,7 +45,7 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define SETTINGS_FILE DATA_DIR "/settings.txt"
 #define LOG_FILE      DATA_DIR "/log.txt"
 #define LOG_PREV_FILE DATA_DIR "/log_prev.txt"
-#define APP_VERSION   "1.32"
+#define APP_VERSION   "1.33-playfix5"
 
 #define MAX_ITEMS 100
 
@@ -56,6 +60,9 @@ int _newlib_heap_size_user = 96 * 1024 * 1024;
 #define HEADER_H  56
 #define FOOTER_Y  506
 #define SEARCH_H  44
+#define TAB_X     230
+#define TAB_STEP  165
+#define TAB_W     156
 
 static unsigned g_btn_ok = SCE_CTRL_CROSS, g_btn_back = SCE_CTRL_CIRCLE;
 static const char *g_ok_name = "X", *g_back_name = "O";
@@ -67,6 +74,29 @@ static int g_auth_checking;
 static char g_pref_quality[32];
 static char g_search[64];
 static int g_chat_on = 1;
+/* 0 = automatic UI language, 1 = all, then explicit broadcast languages. */
+static const char *const region_codes[]={"AUTO","","PT","EN","ES","FR","DE","IT","RU","JA","KO","ZH","ZH_HK","ID","TL","NL","PL","TR","UK","SV","AR","TH","VI","OTHER"};
+static const char *const region_names[]={"Auto","ALL","Português","English","Español","Français","Deutsch","Italiano","Русский","日本語","한국어","中文","中文 (香港)","Bahasa Indonesia","Filipino","Nederlands","Polski","Türkçe","Українська","Svenska","العربية","ไทย","Tiếng Việt","OTHER"};
+#define REGION_COUNT ((int)(sizeof(region_codes)/sizeof(region_codes[0])))
+static int g_region=0;
+static const char *region_code(void){
+    static const char *const by_ui[]={"EN","ES","PT","FR","IT","DE","RU","ID","TL","TL","NL","PL","TR","UK","SV","JA","KO","ZH","ZH"};
+    int lang=vt_lang_current();
+    return g_region?region_codes[g_region]:(lang>=0&&lang<19?by_ui[lang]:"EN");
+}
+static const char *region_label(int i){
+    if(i==0)return vt_lang_current()==2?"Automático":"Auto";
+    if(i==1)return vt_lang_current()==2?"Todos os idiomas":"All languages";
+    if(i==REGION_COUNT-1)return vt_lang_current()==2?"Outros":"Other";
+    return region_names[i];
+}
+static const char *region_title(void){
+    static const char *const labels[]={"Live languages","Idioma de directos","Idioma das lives","Langue des lives","Lingua delle live","Stream-Sprache","Язык трансляций","Bahasa siaran","Wika ng live","Pinulongan sa live","Streamtaal","Język transmisji","Yayın dili","Мова трансляцій","Streams språk","配信言語","방송 언어","直播语言","直播語言"};
+    int i=vt_lang_current();return i>=0&&i<19?labels[i]:labels[0];
+}
+static int g_profile=VT_PROFILE_BALANCED, g_auto_quality=0, g_diag=0, g_volume=100, g_remember=1;
+static unsigned long long g_auth_last_check;
+static int g_touch_manual_scroll = 0;
 
 static ui_input_t g_in;
 static char g_toast[160];
@@ -75,7 +105,7 @@ static unsigned long long g_toast_until;
 /* ------------------------------------------------------------- tabs */
 
 enum { TAB_FOLLOWED, TAB_EXPLORE, TAB_SEARCH, TAB_COUNT };
-static const char *const g_tab_names[TAB_COUNT] = { "Siguiendo", "Explorar", "Buscar" };
+static const char *tab_name(int t) {return vt_tr((vt_text_id)(VT_I_FOLLOWING+t));}
 
 typedef enum { LS_EMPTY, LS_LOADING, LS_READY, LS_ERROR } list_state_t;
 
@@ -133,6 +163,7 @@ static void settings_load(void)
     FILE *f = fopen(SETTINGS_FILE, "r");
     if (!f)
         return;
+    int quality_flow=0;
     while (fgets(line, sizeof(line), f)) {
         size_t n = strlen(line);
         while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
@@ -143,8 +174,20 @@ static void settings_load(void)
             snprintf(g_search, sizeof(g_search), "%s", line + 7);
         else if (!strncmp(line, "chat=", 5))
             g_chat_on = atoi(line + 5) != 0;
+        else if (!strncmp(line, "lang=", 5))
+            vt_lang_set_code(line + 5);
+        else if (!strncmp(line,"region=",7)) {for(int i=0;i<REGION_COUNT;i++)if(!strcmp(line+7,region_codes[i])){g_region=i;break;}}
+        else if (!strncmp(line, "profile=", 8)) {int p=atoi(line+8);if(p>=0&&p<VT_PROFILE_COUNT)g_profile=p;}
+        else if (!strncmp(line,"quality_flow=",13)) quality_flow=atoi(line+13);
+        else if (!strncmp(line, "auto_quality=", 13)) g_auto_quality=atoi(line+13)!=0;
+        else if (!strncmp(line, "diag=", 5)) g_diag=atoi(line+5)!=0;
+        else if (!strncmp(line, "volume=", 7)) {int v=atoi(line+7);if(v>=0&&v<=100)g_volume=v;}
+        else if (!strncmp(line, "remember=", 9)) g_remember=atoi(line+9)!=0;
+        else if (!strncmp(line, "touch=", 6))
+            ui_touch_enable(atoi(line + 6) != 0);
     }
     fclose(f);
+    if(quality_flow<3)g_auto_quality=0;
 }
 
 static void settings_save(void)
@@ -153,7 +196,11 @@ static void settings_save(void)
     FILE *f = fopen(SETTINGS_FILE, "w");
     if (!f)
         return;
-    fprintf(f, "quality=%s\nsearch=%s\nchat=%d\n", g_pref_quality, g_search, g_chat_on);
+    fprintf(f, "quality=%s\nsearch=%s\nchat=%d\nlang=%s\ntouch=%d\n",
+            g_pref_quality, g_search, g_chat_on,
+            vt_lang_code(vt_lang_current()), ui_touch_enabled());
+    fprintf(f,"profile=%d\nauto_quality=%d\ndiag=%d\nvolume=%d\nremember=%d\n",g_profile,g_auto_quality,g_diag,g_volume,g_remember);
+    fprintf(f,"region=%s\nquality_flow=3\n",region_codes[g_region]);
     fclose(f);
 }
 
@@ -205,13 +252,13 @@ static void tab_load(int t)
     }
     if (!net_connected()) {
         tb->state = LS_ERROR;
-        snprintf(tb->err, sizeof(tb->err), "Sin conexion a Internet. Conectate a una red Wi-Fi.");
-        LOGW("%s: sin Wi-Fi", g_tab_names[t]);
+        snprintf(tb->err, sizeof(tb->err), vt_msg("Sin conexion a Internet. Conectate a una red Wi-Fi."));
+        LOGW("%s: sin Wi-Fi", tab_name(t));
         return;
     }
     list_job_t *j = &tb->job;
     j->kind = t == TAB_FOLLOWED ? TW_LIST_FOLLOWED : t == TAB_EXPLORE ? TW_LIST_TOP : TW_LIST_SEARCH;
-    snprintf(j->query, sizeof(j->query), "%s", g_search);
+    snprintf(j->query, sizeof(j->query), "%s", t==TAB_EXPLORE?region_code():g_search);
     snprintf(j->oauth, sizeof(j->oauth), "%s", g_logged ? g_auth.access : "");
     if (task_start(&tb->task, list_job_run, j) == 0) {
         tb->busy = 1;
@@ -227,12 +274,13 @@ static void tabs_update(void)
         if (!tb->busy || !task_done(&tb->task))
             continue;
         tb->busy = 0;
+        if(t==TAB_EXPLORE && strcmp(tb->job.query,region_code())){tb->state=LS_EMPTY;tb->count=0;tab_load(t);continue;}
         if (tb->job.n >= 0)
-            LOGI("%s: %d canales", g_tab_names[t], tb->job.n);
+            LOGI("%s: %d canales", tab_name(t), tb->job.n);
         else if (tb->job.n == -2)
-            LOGI("%s: hace falta iniciar sesion", g_tab_names[t]);
+            LOGI("%s: hace falta iniciar sesion", tab_name(t));
         else if (!tb->task.abort_flag)
-            LOGE("%s: %s", g_tab_names[t], tb->job.err);
+            LOGE("%s: %s", tab_name(t), tb->job.err);
         if (tb->job.n >= 0) {
             /* keep the selection on the same channel if it is still there */
             char cur[32] = "";
@@ -283,6 +331,7 @@ static void auth_update(void)
     if (!g_auth_checking || !task_done(&g_auth_task))
         return;
     g_auth_checking = 0;
+    g_auth_last_check=sceKernelGetProcessTimeWide();
     int r = g_auth_task.result;
     if (r == 0)
         LOGI("sesion valida: @%s", g_auth_job.a.login);
@@ -290,7 +339,7 @@ static void auth_update(void)
         LOGE("comprobacion de sesion fallida (%d): %s", r, g_auth_job.err);
     if (r == 0) {
         g_auth = g_auth_job.a;
-        auth_save(&g_auth, AUTH_FILE);
+        if(g_remember)auth_save(&g_auth, AUTH_FILE);
     } else if (r == -1) {
         g_logged = 0;
         memset(&g_auth, 0, sizeof(g_auth));
@@ -324,10 +373,11 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
 {
     char line[256], v[32];
 
-    if (selected) {
-        ui_round_rect(x - 6, y - 6, CARD_W + 12, CARD_H + 10, 8, C_PANEL);
-        ui_frame(x, y, CARD_W, THUMB_H, 3, C_PURPLE);
-    }
+    /* TV-inspired full-card focus, without scaling hitboxes or textures. */
+    ui_round_rect(x - 5, y - 5, CARD_W + 10, CARD_H + 10, 10,
+                  selected ? C_PURPLE : C_PANEL);
+    ui_round_rect(x - 2, y - 2, CARD_W + 4, CARD_H + 4, 8,
+                  selected ? C_PANEL2 : C_SURFACE);
 
     /* thumbnail */
     vita2d_texture *tex = s->live ? img_get(s->preview) : NULL;
@@ -337,26 +387,30 @@ static void draw_card(const twitch_stream_t *s, int x, int y, int selected)
         vita2d_draw_rectangle(x, y, CARD_W, THUMB_H, C_PANEL);
         if (!s->live) {
             draw_avatar(s->avatar, s->display, x + CARD_W / 2 - 36, y + 28, 72);
-            ui_text_center(x + CARD_W / 2, y + THUMB_H - 22, C_DIM, 0.85f, "Desconectado");
+            ui_text_center(x + CARD_W / 2, y + THUMB_H - 22, C_DIM, 0.85f, vt_tr(VT_I_OFFLINE));
         } else {
             ui_text_center(x + CARD_W / 2, y + THUMB_H / 2 + 8, C_DIM, 1.0f, s->display);
         }
     }
     if (s->live) {
-        ui_round_rect(x + 8, y + 8, 64, 22, 4, C_RED);
-        ui_text_center(x + 40, y + 25, C_WHITE, 0.75f, "DIRECTO");
+        const char *live=vt_tr(VT_I_LIVE);
+        int live_w=ui_text_w(0.75f,live)+24;
+        if(live_w> CARD_W-16)live_w=CARD_W-16;
+        ui_round_rect(x+8,y+8,live_w,24,6,C_RED);
+        ui_text_center(x+8+live_w/2,y+25,C_WHITE,0.75f,live);
         ui_fmt_viewers(s->viewers, v, sizeof(v));
-        snprintf(line, sizeof(line), "%s espectadores", v);
+        snprintf(line, sizeof(line), vt_msg("%s espectadores"), v);
         int w = ui_text_w(0.75f, line) + 16;
-        ui_round_rect(x + 8, y + THUMB_H - 30, w, 22, 4, C_SHADE);
-        ui_text(x + 16, y + THUMB_H - 13, C_WHITE, 0.75f, line);
+        if(w>CARD_W-16)w=CARD_W-16;
+        ui_round_rect(x+CARD_W-w-8,y+THUMB_H-30,w,22,5,C_SHADE);
+        ui_text_fit(x+CARD_W-w,y+THUMB_H-13,w-16,C_WHITE,0.75f,line);
     }
 
     /* text */
     int ty = y + THUMB_H + 10;
     draw_avatar(s->avatar, s->display, x, ty, 36);
     ui_clean_text(s->live && s->title[0] ? s->title : s->display, line, sizeof(line));
-    ui_text_fit(x + 46, ty + 15, CARD_W - 46, selected ? C_WHITE : RGBA8(220, 220, 225, 255), 0.85f, line);
+    ui_text_fit(x+46,ty+15,CARD_W-50,C_WHITE,0.88f,line);
     char second[160];
     snprintf(second, sizeof(second), "%s%s%s", s->display, s->game[0] ? "  -  " : "", s->game[0] ? s->game : "");
     ui_clean_text(second, line, sizeof(line));
@@ -369,40 +423,50 @@ static void draw_header(void)
     vita2d_draw_rectangle(0, HEADER_H, SCREEN_W, 1, C_PANEL2);
 
     /* logo */
-    ui_round_rect(20, 12, 32, 32, 6, C_PURPLE);
-    ui_text_center(36, 36, C_WHITE, 1.0f, "VT");
+    /* Twitch Glitch mark, scan-converted from the 24x24 brand silhouette.
+     * Draw directly with native rectangles: no texture allocation. */
+    static const unsigned int glitch[24]={
+        0x3fffe0u,0x3ffff0u,0x200078u,0x20007cu,0x20007cu,0x23107cu,0x23107cu,0x23107cu,0x23107cu,0x23107cu,0x20007cu,0x30007cu,0x38007cu,0x1c007cu,0xe007cu,0x7e7fcu,0x3f7fcu,0x1fffcu,0xfffcu,0x7ffcu,0x780u,0x380u,0x180u,0x80u
+    };
+    for(int gy=0;gy<24;gy++){
+        unsigned mask=glitch[gy];
+        for(int gx=0;gx<24;){
+            if(!(mask&(1u<<gx))){gx++;continue;}
+            int end=gx+1;
+            while(end<24&&(mask&(1u<<end)))end++;
+            vita2d_draw_rectangle(20+gx*1.25f,12+gy*1.25f,(end-gx)*1.25f,1.25f,C_PURPLE);
+            gx=end;
+        }
+    }
     ui_text(62, 37, C_WHITE, 1.2f, "VitaTwitch");
 
-    /* tabs */
-    int x = 250;
-    ui_round_rect(x - 34, 17, 24, 22, 5, C_PANEL2);
-    ui_text_center(x - 22, 33, C_GREY, 0.8f, "L");
-    for (int t = 0; t < TAB_COUNT; t++) {
-        int w = ui_text_w(1.0f, g_tab_names[t]);
-        ui_text(x, 36, t == g_tab ? C_WHITE : C_DIM, 1.0f, g_tab_names[t]);
-        if (t == g_tab)
-            vita2d_draw_rectangle(x, HEADER_H - 4, w, 4, C_PURPLE);
-        x += w + 30;
+    /* Fixed TV-style tab geometry: labels cannot collide with account. */
+    ui_text_center(TAB_X-16,35,C_GREY,0.82f,"L");
+    for(int t=0;t<TAB_COUNT;t++){
+        int x=TAB_X+t*TAB_STEP;
+        int active=t==g_tab;
+        ui_round_rect(x,9,TAB_W,38,10,active?C_PURPLE:C_PANEL);
+        const char *label=tab_name(t);
+        float scale=ui_text_w(1.0f,label)>TAB_W-20?0.78f:1.0f;
+        int tw=ui_text_w(scale,label);
+        if(tw>TAB_W-20)tw=TAB_W-20;
+        ui_text_fit(x+(TAB_W-tw)/2,35,TAB_W-20,active?C_WHITE:C_GREY,scale,label);
     }
-    ui_round_rect(x - 8, 17, 24, 22, 5, C_PANEL2);
-    ui_text_center(x + 4, 33, C_GREY, 0.8f, "R");
+    ui_text_center(735,35,C_GREY,0.82f,"R");
 
     /* account chip */
     if (g_logged) {
         char name[80];
         ui_clean_text(g_auth.display[0] ? g_auth.display : g_auth.login, name, sizeof(name));
-        int w = ui_text_w(0.9f, name);
-        draw_avatar(g_auth.avatar, name, SCREEN_W - 20 - 32, 12, 32);
-        ui_text(SCREEN_W - 20 - 32 - 10 - w, 34, C_WHITE, 0.9f, name);
-        if (g_auth_checking)
-            ui_spinner(SCREEN_W - 20 - 32 - 24 - w, 28, 7, C_GREY);
+        ui_round_rect(755,8,185,40,10,C_PANEL);
+        draw_avatar(g_auth.avatar,name,902,12,32);
+        ui_text_fit(766,34,126,C_WHITE,0.84f,name);
+        if(g_auth_checking)ui_spinner(758,28,5,C_GREY);
     } else {
-        const char *l = "Iniciar sesion";
-        int w = ui_text_w(0.85f, l);
-        int bw = ui_text_w(0.8f, "SELECT") + 12;
-        ui_round_rect(SCREEN_W - 20 - w - bw - 8, 17, bw, 22, 5, C_PURPLE);
-        ui_text(SCREEN_W - 20 - w - bw - 2, 33, C_WHITE, 0.8f, "SELECT");
-        ui_text(SCREEN_W - 20 - w, 34, C_WHITE, 0.85f, l);
+        ui_round_rect(755,8,185,40,10,C_PANEL);
+        ui_round_rect(763,17,62,22,5,C_PURPLE_D);
+        ui_text_center(794,33,C_WHITE,0.72f,"SELECT");
+        ui_text_fit(834,34,96,C_WHITE,0.85f,vt_tr(VT_I_MENU));
     }
 }
 
@@ -414,24 +478,27 @@ static void draw_footer(void)
     vita2d_draw_rectangle(0, FOOTER_Y, SCREEN_W, 1, C_PANEL2);
     int x = 20, y = FOOTER_Y + 26;
     if (g_tab == TAB_SEARCH && tb->sel < 0)
-        snprintf(ok, sizeof(ok), "Escribir busqueda");
+        snprintf(ok, sizeof(ok), "%s", vt_tr(VT_I_SEARCH));
     else
-        snprintf(ok, sizeof(ok), "Ver directo");
+        snprintf(ok, sizeof(ok), "%s", vt_tr(VT_I_PLAY));
     x += ui_hint(x, y, g_ok_name, ok);
-    x += ui_hint(x, y, "\xE2\x96\xB3" /* triangle */, "Actualizar");
+    x += ui_hint(x, y, "\xE2\x96\xB3" /* triangle */, vt_tr(VT_I_REFRESH));
     if (g_tab == TAB_SEARCH)
-        x += ui_hint(x, y, "\xE2\x96\xA1" /* square */, "Ir al canal exacto");
-    x += ui_hint(x, y, "L/R", "Pestana");
-    x += ui_hint(x, y, "SELECT", "Cuenta");
-    ui_hint(x, y, "START", "Salir");
+        x += ui_hint(x, y, "\xE2\x96\xA1" /* square */, vt_msg("Ir al canal exacto"));
+    x += ui_hint(x, y, "L/R", vt_tr(VT_I_TAB));
+    x += ui_hint(x, y, "SELECT", vt_tr(VT_I_MENU));
+    ui_hint(x, y, "START", vt_tr(VT_I_EXIT));
 }
 
 static void draw_center_msg(const char *title, const char *msg, int top)
 {
     int cy = top + (FOOTER_Y - top) / 2;
     ui_text_center(SCREEN_W / 2, cy - 10, C_WHITE, 1.15f, title);
-    if (msg)
-        ui_text_center(SCREEN_W / 2, cy + 22, C_GREY, 0.9f, msg);
+    if (msg) {
+        int w=ui_text_w(0.9f,msg);
+        if(w>SCREEN_W-48)w=SCREEN_W-48;
+        ui_text_fit((SCREEN_W-w)/2,cy+22,w,C_GREY,0.9f,msg);
+    }
 }
 
 static void draw_home(void)
@@ -442,8 +509,15 @@ static void draw_home(void)
 
     vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, C_BG);
 
-    /* scroll so the selected row stays visible */
-    if (tb->sel >= 0) {
+    /* Scroll follows d-pad selection; manual touch scrolling may override. */
+    if (g_touch_manual_scroll) {
+        int rows = (tb->count+COLS-1)/COLS;
+        float total=(float)(rows*ROW_PITCH);
+        float max=total-(FOOTER_Y-top-8);
+        if(max<0)max=0;
+        if(tb->scroll>max)tb->scroll=max;
+        if(tb->scroll<0)tb->scroll=0;
+    } else if (tb->sel >= 0) {
         float row_y = (float)(tb->sel / COLS) * ROW_PITCH;
         float view_h = (float)(FOOTER_Y - top - 8);
         float target = tb->scroll;
@@ -475,19 +549,19 @@ static void draw_home(void)
             draw_card(&tb->items[i], x, y, i == tb->sel);
         }
     } else if (tb->need_login) {
-        draw_center_msg("Inicia sesion para ver los canales que sigues",
-                        "Pulsa SELECT y sigue las instrucciones (no hace falta escribir la contrasena en la Vita)", top);
+        draw_center_msg(vt_msg("Inicia sesion para ver los canales que sigues"),
+                        vt_msg("Pulsa SELECT y sigue las instrucciones (no hace falta escribir la contrasena en la Vita)"), top);
     } else if (tb->state == LS_LOADING) {
         ui_spinner(SCREEN_W / 2, top + (FOOTER_Y - top) / 2 - 10, 16, C_PURPLE);
     } else if (tb->state == LS_ERROR) {
-        draw_center_msg("No se pudo cargar", tb->err, top);
+        draw_center_msg(vt_msg("No se pudo cargar"), tb->err, top);
     } else if (g_tab == TAB_SEARCH && !g_search[0]) {
-        snprintf(buf, sizeof(buf), "Pulsa %s para buscar un canal por nombre", g_ok_name);
-        draw_center_msg("Busca canales de Twitch", buf, top);
+        snprintf(buf, sizeof(buf), vt_msg("Pulsa %s para buscar un canal por nombre"), g_ok_name);
+        draw_center_msg(vt_msg("Busca canales de Twitch"), buf, top);
     } else if (tb->state == LS_READY) {
-        draw_center_msg(g_tab == TAB_FOLLOWED ? "Ninguno de tus canales esta en directo" :
-                        g_tab == TAB_SEARCH ? "Sin resultados" : "No hay directos",
-                        "Pulsa Triangulo para actualizar", top);
+        draw_center_msg(g_tab == TAB_FOLLOWED ? vt_msg("Ninguno de tus canales esta en directo") :
+                        g_tab == TAB_SEARCH ? vt_msg("Sin resultados") : vt_msg("No hay directos"),
+                        vt_msg("Pulsa Triangulo para actualizar"), top);
     }
 
     /* search bar */
@@ -503,7 +577,7 @@ static void draw_home(void)
         if (g_search[0])
             ui_text(GRID_X + 48, y + 29, C_WHITE, 1.0f, g_search);
         else
-            ui_text(GRID_X + 48, y + 29, C_DIM, 1.0f, "Buscar canales...");
+            ui_text(GRID_X + 48, y + 29, C_DIM, 1.0f, vt_tr(VT_I_SEARCH));
     }
 
     if (tb->busy && tb->count > 0)
@@ -562,7 +636,7 @@ static void wrap_text(int x, int y, int max_w, unsigned color, float scale, cons
 static void modal_message(const char *title, const char *msg)
 {
     char hint[32];
-    snprintf(hint, sizeof(hint), "Aceptar");
+    snprintf(hint, sizeof(hint), vt_msg("Aceptar"));
     LOGE("mensaje en pantalla: %s: %s", title, msg);
     for (;;) {
         ui_input_poll(&g_in);
@@ -604,7 +678,7 @@ static int run_with_spinner(task_t *t, task_fn fn, void *arg, const char *msg)
         draw_modal_box(460, 150, &x, &y);
         ui_spinner(x + 50, y + 62, 14, C_PURPLE);
         ui_text_fit(x + 84, y + 70, 460 - 110, C_WHITE, 1.0f, msg);
-        ui_hint(x + 460 - 130, y + 150 - 20, g_back_name, "Cancelar");
+        ui_hint(x + 460 - 130, y + 150 - 20, g_back_name, vt_msg("Cancelar"));
         frame_end();
     }
 }
@@ -612,21 +686,21 @@ static int run_with_spinner(task_t *t, task_fn fn, void *arg, const char *msg)
 static int ime_input(const char *title, const char *initial, char *out, size_t cap, int max_len)
 {
     static SceWChar16 title16[64], init16[128], buf16[128];
-    size_t i;
-
-    for (i = 0; title[i] && i < 63; i++)
-        title16[i] = (unsigned char)title[i];
-    title16[i] = 0;
-    for (i = 0; initial[i] && i < 127; i++)
-        init16[i] = (unsigned char)initial[i];
-    init16[i] = 0;
+    vt_utf8_to_utf16((uint16_t*)title16,64,title);
+    vt_utf8_to_utf16((uint16_t*)init16,128,initial);
     memset(buf16, 0, sizeof(buf16));
 
     SceImeDialogParam param;
     sceImeDialogParamInit(&param);
-    param.supportedLanguages = SCE_IME_LANGUAGE_ENGLISH | SCE_IME_LANGUAGE_SPANISH;
+    param.supportedLanguages =
+        SCE_IME_LANGUAGE_ENGLISH | SCE_IME_LANGUAGE_SPANISH |
+        SCE_IME_LANGUAGE_PORTUGUESE_BR | SCE_IME_LANGUAGE_FRENCH |
+        SCE_IME_LANGUAGE_GERMAN | SCE_IME_LANGUAGE_ITALIAN |
+        SCE_IME_LANGUAGE_RUSSIAN | SCE_IME_LANGUAGE_JAPANESE |
+        SCE_IME_LANGUAGE_KOREAN | SCE_IME_LANGUAGE_SIMPLIFIED_CHINESE |
+        SCE_IME_LANGUAGE_TRADITIONAL_CHINESE | SCE_IME_LANGUAGE_TURKISH;
     param.languagesForced = SCE_FALSE;
-    param.type = SCE_IME_TYPE_BASIC_LATIN;
+    param.type = SCE_IME_TYPE_DEFAULT;
     param.option = SCE_IME_OPTION_NO_AUTO_CAPITALIZATION | SCE_IME_OPTION_NO_ASSISTANCE;
     param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
     param.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
@@ -654,10 +728,7 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 
     if (res.button != SCE_IME_DIALOG_BUTTON_ENTER)
         return 0;
-    size_t n = 0;
-    for (i = 0; buf16[i] && n + 1 < cap; i++)
-        out[n++] = buf16[i] < 0x80 ? (char)buf16[i] : '?';
-    out[n] = 0;
+    size_t n = vt_utf16_to_utf8(out,cap,(const uint16_t*)buf16,128);
     /* trim */
     while (n && out[n - 1] == ' ')
         out[--n] = 0;
@@ -669,63 +740,6 @@ static int ime_input(const char *title, const char *initial, char *out, size_t c
 }
 
 /* ---------------------------------------------------------- quality */
-
-static int quality_modal(const char *display, m3u8_variant_t **list, int n, int fallback)
-{
-    int sel = -1;
-    for (int i = 0; i < n && sel < 0; i++)
-        if (g_pref_quality[0] && !strcmp(list[i]->name, g_pref_quality))
-            sel = i;
-    for (int i = 0; i < n && sel < 0; i++)
-        if (list[i]->height == 720 && list[i]->fps < 40)
-            sel = i;
-    if (sel < 0)
-        sel = 0;
-
-    const int row_h = 50, w = 520;
-    int vis = n < 5 ? n : 5;
-    int top = 0;
-    char title[96], name[80];
-    ui_clean_text(display, name, sizeof(name));
-    snprintf(title, sizeof(title), "%s", name);
-
-    for (;;) {
-        ui_input_poll(&g_in);
-        if (g_in.pressed & SCE_CTRL_UP) sel = (sel + n - 1) % n;
-        if (g_in.pressed & SCE_CTRL_DOWN) sel = (sel + 1) % n;
-        if (g_in.pressed & g_btn_ok) return sel;
-        if (g_in.pressed & g_btn_back) return -1;
-        if (sel < top) top = sel;
-        if (sel >= top + vis) top = sel - vis + 1;
-
-        frame_begin();
-        draw_home();
-        int h = 120 + vis * row_h + (fallback ? 26 : 0);
-        int x, y;
-        draw_modal_box(w, h, &x, &y);
-        ui_text_fit(x + 28, y + 42, w - 56, C_WHITE, 1.15f, title);
-        ui_text(x + 28, y + 68, C_GREY, 0.85f, "Elige la calidad del directo");
-        int ly = y + 84;
-        if (fallback) {
-            ui_text(x + 28, ly + 14, C_DIM, 0.75f, "Este canal no ofrece 480p/720p: se muestran las disponibles.");
-            ly += 26;
-        }
-        for (int k = 0; k < vis; k++) {
-            int i = top + k;
-            int ry = ly + k * row_h;
-            char info[96];
-            if (i == sel)
-                ui_round_rect(x + 16, ry, w - 32, row_h - 6, 8, C_PURPLE);
-            ui_text(x + 32, ry + 30, C_WHITE, 1.05f, list[i]->name);
-            snprintf(info, sizeof(info), "%dx%d  -  %.0f fps  -  %.1f Mbps", list[i]->width, list[i]->height,
-                     list[i]->fps, list[i]->bandwidth / 1e6);
-            ui_text(x + 170, ry + 29, i == sel ? C_WHITE : C_GREY, 0.85f, info);
-        }
-        ui_hint(x + 28, y + h - 18, g_ok_name, "Reproducir");
-        ui_hint(x + 200, y + h - 18, g_back_name, "Volver");
-        frame_end();
-    }
-}
 
 /* ------------------------------------------------------------- play */
 
@@ -745,84 +759,223 @@ static int variants_run(void *arg, volatile int *abort_flag)
     return j->n;
 }
 
-static void play_channel(const char *login, const char *display, const char *title)
+/* Channel opening and manual quality selection are states in main(), never
+ * nested UI loops. The player is entered only after a separate input frame. */
+static variants_job_t play_job;
+static task_t play_task;
+static m3u8_variant_t *play_list[M3U8_MAX_VARIANTS];
+static int play_count,play_sel,play_top;
+static char play_login[64],play_display[96],play_title[256];
+enum { PLAY_IDLE, PLAY_FETCH, PLAY_CANCEL, PLAY_CHOOSE, PLAY_LAUNCH };
+static int play_state;
+static int play_armed;
+
+static void play_channel(const char *login,const char *display,const char *title)
 {
-    static variants_job_t job;
-    static task_t task;
+    if(play_state!=PLAY_IDLE)return;
+    if(!net_connected()){
+        modal_message(vt_msg("Sin conexion"),vt_msg("Conecta la Vita a una red Wi-Fi e intentalo de nuevo."));
+        return;
+    }
+    snprintf(play_login,sizeof(play_login),"%s",login?login:"");
+    ui_clean_text(display&&display[0]?display:play_login,play_display,sizeof(play_display));
+    ui_clean_text(title?title:"",play_title,sizeof(play_title));
+    memset(&play_job,0,sizeof(play_job));
+    snprintf(play_job.login,sizeof(play_job.login),"%s",play_login);
+    snprintf(play_job.oauth,sizeof(play_job.oauth),"%s",g_logged?g_auth.access:"");
+    if(task_start(&play_task,variants_run,&play_job)<0){
+        toast(vt_tr(VT_I_BACK));return;
+    }
+    play_state=PLAY_FETCH;play_armed=0;
+    LOGI("quality flow: fetching %s",play_login);
+}
+
+static void play_selected(void)
+{
     static char err[256];
-    char msg[128], clean_title[200];
+    /* Keep player/reconnect working data off the small UI stack. */
 
-    if (!net_connected()) {
-        modal_message("Sin conexion", "Conecta la Vita a una red Wi-Fi e intentalo de nuevo.");
-        return;
-    }
-    memset(&job, 0, sizeof(job));
-    snprintf(job.login, sizeof(job.login), "%s", login);
-    snprintf(job.oauth, sizeof(job.oauth), "%s", g_logged ? g_auth.access : "");
-    snprintf(msg, sizeof(msg), "Abriendo %s...", display && display[0] ? display : login);
-    LOGI("abrir canal %s (%s)", login, g_logged ? "con sesion" : "anonimo");
-    if (run_with_spinner(&task, variants_run, &job, msg) < 0) {
-        LOGI("cancelado por el usuario");
-        return;
-    }
-    for (int i = 0; i < job.n; i++)
-        LOGI("  calidad %s %dx%d %.0f fps %.2f Mbps%s", job.v[i].name, job.v[i].width, job.v[i].height,
-             job.v[i].fps, job.v[i].bandwidth / 1e6, job.v[i].audio_only ? " (solo audio)" : "");
-    if (job.n <= 0) {
-        modal_message("No se pudo abrir el canal", job.err);
-        return;
-    }
 
-    m3u8_variant_t *list[M3U8_MAX_VARIANTS];
-    int count = 0, fallback = 0;
-    for (int i = 0; i < job.n; i++)
-        if (!job.v[i].audio_only && (job.v[i].height == 480 || job.v[i].height == 720))
-            list[count++] = &job.v[i];
-    if (count == 0) {
-        fallback = 1;
-        for (int i = 0; i < job.n; i++)
-            if (!job.v[i].audio_only && job.v[i].height > 0 && job.v[i].height <= 1080)
-                list[count++] = &job.v[i];
-    }
-    if (count == 0) {
-        modal_message("Sin video", "El stream no tiene calidades de video compatibles.");
-        return;
-    }
 
-    int sel = quality_modal(display && display[0] ? display : login, list, count, fallback);
-    if (sel < 0)
-        return;
-    snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", list[sel]->name);
+
+    int sel=play_sel;
+    const char *login=play_login,*display=play_display,*title=play_title;
+    if(sel<0||sel>=play_count){play_state=PLAY_IDLE;return;}
+    play_state=PLAY_IDLE;
+    snprintf(g_pref_quality, sizeof(g_pref_quality), "%s", play_list[sel]->name);
     settings_save();
 
+    char clean_title[200];
     ui_clean_text(title ? title : "", clean_title, sizeof(clean_title));
     player_params_t pp;
+    int retries=0, reductions=0, r=0, ad_switched=0;
+    static char ad_backup[M3U8_URL_MAX];
+    ad_backup[0]=0;
+    char wanted[48];
+    static m3u8_variant_t previous;
+    for(;;){
     memset(&pp, 0, sizeof(pp));
-    pp.url = list[sel]->url;
+    pp.url = play_list[sel]->url;
     pp.channel = display && display[0] ? display : login;
     pp.title = clean_title;
-    pp.quality = list[sel]->name;
-    pp.width = list[sel]->width;
-    pp.height = list[sel]->height;
-    pp.fps = (float)list[sel]->fps;
+    pp.quality = play_list[sel]->name;
+    pp.width = play_list[sel]->width;
+    pp.height = play_list[sel]->height;
+    pp.fps = (float)play_list[sel]->fps;
     pp.font = ui_font;
     pp.btn_back = g_btn_back;
-    pp.login = job.login;
+    pp.login = play_job.login;
+    pp.chat_nick = g_logged ? g_auth.login : NULL;
+    pp.chat_oauth = g_logged ? g_auth.access : NULL;
     pp.chat_on = &g_chat_on;
-    int chat_before = g_chat_on;
-    {
-        char u[160];
-        LOGI("reproducir %s en %s: %s", login, pp.quality, log_url(pp.url, u, sizeof(u)));
+    pp.profile=g_profile;pp.auto_quality=g_auto_quality;
+    pp.has_lower=vt_profile_lower(play_list,play_count,play_list[sel])>=0;
+    pp.diagnostics=g_diag;pp.volume=&g_volume;
+    pp.ad_backup_url=ad_switched?NULL:ad_backup;
+    LOGI("startup: selected %s %s %dx%d %.0f fps", login, pp.quality, pp.width, pp.height, pp.fps);
+    scePowerSetArmClockFrequency(vt_profile_clock(g_profile,pp.height,pp.fps));
+    LOGI("startup: entering player");
+    r = player_run(&pp, err, sizeof(err));
+    LOGI("quality flow: player returned %d",r);
+    scePowerSetArmClockFrequency(333);
+    settings_save();
+    if(r==PLAYER_AD_SWITCH && !ad_switched && ad_backup[0]){
+        ad_switched=1;
+        snprintf(play_list[sel]->url,sizeof(play_list[sel]->url),"%s",ad_backup);
+        LOGI("player: reopening on verified alternate HLS session");
+        continue;
     }
-    int r = player_run(&pp, err, sizeof(err));
-    if (g_chat_on != chat_before)
-        settings_save();
+    if(r!=PLAYER_RECONNECT&&r!=PLAYER_LOWER_QUALITY)break;
+    if(r==PLAYER_RECONNECT&&++retries>2){r=-1;break;}
+    if(r==PLAYER_LOWER_QUALITY&&++reductions>4){r=-1;break;}
+    previous=*play_list[sel];
+    snprintf(wanted,sizeof(wanted),"%s",previous.name);
+    const int lower=(r==PLAYER_LOWER_QUALITY);
+    memset(&play_job,0,sizeof(play_job));
+    snprintf(play_job.login,sizeof(play_job.login),"%s",login);
+    snprintf(play_job.oauth,sizeof(play_job.oauth),"%s",g_logged?g_auth.access:"");
+    if(run_with_spinner(&play_task,variants_run,&play_job,vt_opt(lower?VT_O_LOWER:VT_O_RECONNECT))<0){r=0;break;}
+    if(play_job.n<=0){snprintf(err,sizeof(err),"%s",play_job.err);r=-1;break;}
+    play_count=0;
+    for(int i=0;i<play_job.n;i++)if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=720)play_list[play_count++]=&play_job.v[i];
+    if(!play_count)for(int i=0;i<play_job.n;i++)if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=1080)play_list[play_count++]=&play_job.v[i];
+    if(!play_count){snprintf(err,sizeof(err),"%s",vt_msg("El stream no tiene calidades de video compatibles."));r=-1;break;}
+    sel=-1;
+    if(lower)sel=vt_profile_lower(play_list,play_count,&previous);
+    else for(int i=0;i<play_count;i++)if(!strcmp(wanted,play_list[i]->name)){sel=i;break;}
+    if(sel<0&&!lower)sel=vt_profile_pick(play_list,play_count,g_profile);
+    if(sel<0){snprintf(err,sizeof(err),"%s",vt_msg("Reproduccion detenida"));r=-1;break;}
+    }
     ui_input_poll(&g_in);
     if (r < 0)
-        modal_message("Reproduccion detenida", err);
+        modal_message(vt_msg("Reproduccion detenida"), err);
     /* viewer counts / thumbnails are stale after watching */
     tab_load(g_tab);
+
+
+
+
 }
+
+static void quality_draw(void)
+{
+    const int x=210,w=540,row=48,vis=play_count<6?play_count:6;
+    const int h=150+vis*row,y=(SCREEN_H-h)/2,ly=y+78;
+    vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
+    vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
+    ui_text_fit(x+24,y+33,w-48,C_WHITE,1.12f,play_display);
+    ui_text(x+24,y+60,C_GREY,0.87f,vt_tr(VT_I_QUALITY));
+    for(int k=0;k<vis&&play_top+k<play_count;k++){
+        int i=play_top+k,ry=ly+k*row;
+        char info[96];
+        vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==play_sel?C_PURPLE:C_PANEL);
+        ui_text_fit(x+28,ry+29,136,C_WHITE,0.98f,play_list[i]->name);
+        snprintf(info,sizeof(info),"%dx%d / %.0f fps",play_list[i]->width,play_list[i]->height,play_list[i]->fps);
+        ui_text_fit(x+176,ry+29,w-200,C_WHITE,0.82f,info);
+    }
+    vita2d_draw_rectangle(x+16,y+h-53,w/2-24,43,C_PANEL2);
+    vita2d_draw_rectangle(x+w/2+8,y+h-53,w/2-24,43,C_PANEL2);
+    ui_text(x+30,y+h-25,C_WHITE,0.9f,vt_tr(VT_I_PLAY));
+    ui_text(x+w/2+20,y+h-25,C_WHITE,0.9f,vt_tr(VT_I_BACK));
+}
+
+static void play_tick(void)
+{
+    unsigned p=g_in.pressed;
+    if(play_state==PLAY_LAUNCH){
+        if(p&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT)){
+            play_state=PLAY_IDLE;return;
+        }
+        /* Present loading before calling the blocking player startup. */
+        vita2d_start_drawing();vita2d_clear_screen();
+        ui_spinner(SCREEN_W/2,SCREEN_H/2-32,14,C_PURPLE);
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+12,C_WHITE,1.0f,vt_tr(VT_I_LOADING));
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+42,C_GREY,0.85f,play_display);
+        frame_end();
+        play_selected();
+        return;
+    }
+    if(play_state==PLAY_FETCH||play_state==PLAY_CANCEL){
+        if(play_state==PLAY_FETCH && (p&(g_btn_back|SCE_CTRL_START))){
+            task_cancel(&play_task);play_state=PLAY_CANCEL;
+        }
+        if(task_done(&play_task)){
+            if(play_state==PLAY_CANCEL){play_state=PLAY_IDLE;return;}
+            if(play_job.n<=0||play_job.n>M3U8_MAX_VARIANTS){
+                play_state=PLAY_IDLE;toast(play_job.err[0]?play_job.err:vt_msg("No se encontraron calidades en la playlist"));return;
+            }
+            play_count=0;
+            for(int i=0;i<play_job.n;i++)
+                if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=720)
+                    play_list[play_count++]=&play_job.v[i];
+            if(!play_count){
+                for(int i=0;i<play_job.n;i++)
+                    if(!play_job.v[i].audio_only&&play_job.v[i].height>0&&play_job.v[i].height<=1080)
+                        play_list[play_count++]=&play_job.v[i];
+            }
+            if(!play_count){play_state=PLAY_IDLE;toast(vt_msg("El stream no tiene calidades de video compatibles."));return;}
+            play_sel=vt_profile_pick(play_list,play_count,g_profile);
+            if(play_sel<0||play_sel>=play_count)play_sel=0;
+            if(!g_auto_quality)
+                for(int i=0;i<play_count;i++)
+                    if(g_pref_quality[0]&&!strcmp(g_pref_quality,play_list[i]->name)){play_sel=i;break;}
+            play_top=play_sel>=6?play_sel-5:0;
+            play_armed=0;
+            play_state=g_auto_quality?PLAY_LAUNCH:PLAY_CHOOSE;
+            LOGI("startup: %d variants; state %d; auto=%d",play_count,play_state,g_auto_quality);
+            return;
+        }
+    }else if(play_state==PLAY_CHOOSE){
+        const int x=210,w=540,row=48,vis=play_count<6?play_count:6;
+        const int h=150+vis*row,y=(SCREEN_H-h)/2,ly=y+78;
+        if(!(g_in.held&(g_btn_ok|g_btn_back))&&!g_in.touch_down)play_armed=1;
+        if(p&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT)){
+            play_state=PLAY_IDLE;LOGI("quality flow: cancelled");return;
+        }
+        if(p&(SCE_CTRL_UP|SCE_CTRL_LEFT))play_sel=(play_sel+play_count-1)%play_count;
+        if(p&(SCE_CTRL_DOWN|SCE_CTRL_RIGHT))play_sel=(play_sel+1)%play_count;
+        if(play_sel<play_top)play_top=play_sel;
+        if(play_sel>=play_top+vis)play_top=play_sel-vis+1;
+        if(play_armed&&(p&g_btn_ok)){play_state=PLAY_LAUNCH;return;}
+        if(play_armed&&g_in.touch_tap){
+            if(ui_touch_hit(&g_in,x+w/2+8,y+h-53,w/2-24,43)){play_state=PLAY_IDLE;return;}
+            if(ui_touch_hit(&g_in,x+16,y+h-53,w/2-24,43)){play_state=PLAY_LAUNCH;return;}
+            for(int k=0;k<vis&&play_top+k<play_count;k++)
+                if(ui_touch_hit(&g_in,x+16,ly+k*row,w-32,row-4)){play_sel=play_top+k;play_state=PLAY_LAUNCH;return;}
+        }
+    }
+    /* Same rendering/swap path as the working main screen, no image-cache
+     * locks, explicit GPU waits or background rendering while choosing. */
+    vita2d_start_drawing();vita2d_clear_screen();
+    if(play_state==PLAY_CHOOSE)quality_draw();
+    else{
+        ui_spinner(SCREEN_W/2,SCREEN_H/2-32,14,C_PURPLE);
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+12,C_WHITE,1.0f,vt_tr(VT_I_LOADING));
+        ui_text_center(SCREEN_W/2,SCREEN_H/2+42,C_GREY,0.85f,play_display);
+    }
+    frame_end();
+}
+
 
 /* ---------------------------------------------------------- account */
 
@@ -860,12 +1013,18 @@ static void account_logged_in(void)
             return;
         if (g_in.pressed & SCE_CTRL_TRIANGLE) {
             LOGI("sesion cerrada por el usuario");
+            if (g_auth_checking) {
+                task_cancel(&g_auth_task);
+                task_wait(&g_auth_task);
+                g_auth_checking = 0;
+                memset(&g_auth_job, 0, sizeof(g_auth_job));
+            }
             g_logged = 0;
             memset(&g_auth, 0, sizeof(g_auth));
             sceIoRemove(AUTH_FILE);
             g_tabs[TAB_FOLLOWED].count = 0;
             tab_load(TAB_FOLLOWED);
-            toast("Has cerrado sesion");
+            toast(vt_msg("Has cerrado sesion"));
             return;
         }
         frame_begin();
@@ -877,9 +1036,9 @@ static void account_logged_in(void)
         char at[48];
         snprintf(at, sizeof(at), "@%s", g_auth.login);
         ui_text(x + 120, y + 94, C_GREY, 0.9f, at);
-        ui_text(x + 28, y + 150, C_GREY, 0.85f, "Sesion iniciada: Siguiendo y anuncios segun tu cuenta.");
-        ui_hint(x + 28, y + 196, "\xE2\x96\xB3", "Cerrar sesion");
-        ui_hint(x + 260, y + 196, g_back_name, "Volver");
+        ui_text(x + 28, y + 150, C_GREY, 0.85f, vt_msg("Sesion iniciada: Siguiendo y anuncios segun tu cuenta."));
+        ui_hint(x + 28, y + 196, "\xE2\x96\xB3", vt_msg("Cerrar sesion"));
+        ui_hint(x + 260, y + 196, g_back_name, vt_msg("Volver"));
         frame_end();
     }
 }
@@ -890,17 +1049,17 @@ static void account_login(void)
     static task_t task;
 
     if (!net_connected()) {
-        modal_message("Sin conexion", "Conecta la Vita a una red Wi-Fi para iniciar sesion.");
+        modal_message(vt_msg("Sin conexion"), vt_msg("Conecta la Vita a una red Wi-Fi para iniciar sesion."));
         return;
     }
     memset(&job, 0, sizeof(job));
     LOGI("login: pidiendo codigo de dispositivo");
-    if (run_with_spinner(&task, login_start_run, &job, "Pidiendo un codigo a Twitch...") < 0)
+    if (run_with_spinner(&task, login_start_run, &job, vt_msg("Pidiendo un codigo a Twitch...")) < 0)
         return;
     if (task.result >= 0)
         LOGI("login: codigo recibido, caduca en %d s, consulta cada %d s", job.dev.expires_in, job.dev.interval);
     if (task.result < 0) {
-        modal_message("No se pudo iniciar sesion", job.err);
+        modal_message(vt_msg("No se pudo iniciar sesion"), job.err);
         return;
     }
 
@@ -934,17 +1093,17 @@ static void account_login(void)
                 g_auth = job.a;
                 g_logged = 1;
                 ensure_data_dir();
-                auth_save(&g_auth, AUTH_FILE);
+                if(g_remember)auth_save(&g_auth, AUTH_FILE);
                 char hi[96], name[80];
                 ui_clean_text(g_auth.display, name, sizeof(name));
-                snprintf(hi, sizeof(hi), "Hola, %s", name);
+                snprintf(hi, sizeof(hi), vt_msg("Hola, %s"), name);
                 toast(hi);
                 g_tab = TAB_FOLLOWED;
                 tab_load(TAB_FOLLOWED);
                 return;
             }
             if (r < 0) {
-                modal_message("No se pudo iniciar sesion", job.err);
+                modal_message(vt_msg("No se pudo iniciar sesion"), job.err);
                 return;
             }
             if (r == AUTH_SLOW_DOWN)
@@ -953,7 +1112,7 @@ static void account_login(void)
         }
         if (!polling && now >= next_poll) {
             if (now >= expires) {
-                modal_message("Codigo caducado", "El codigo ha caducado. Pulsa SELECT para pedir otro.");
+                modal_message(vt_msg("Codigo caducado"), vt_msg("El codigo ha caducado. Pulsa SELECT para pedir otro."));
                 return;
             }
             if (task_start(&task, login_poll_run, &job) == 0)
@@ -964,19 +1123,19 @@ static void account_login(void)
         draw_home();
         int x, y, w = 640, h = 330;
         draw_modal_box(w, h, &x, &y);
-        ui_text(x + 32, y + 50, C_WHITE, 1.3f, "Iniciar sesion en Twitch");
-        ui_text(x + 32, y + 92, C_GREY, 0.95f, "1. En tu movil o PC abre:");
+        ui_text(x + 32, y + 50, C_WHITE, 1.3f, vt_msg("Iniciar sesion en Twitch"));
+        ui_text(x + 32, y + 92, C_GREY, 0.95f, vt_msg("1. En tu movil o PC abre:"));
         ui_text(x + 60, y + 128, C_PURPLE, 1.4f, "twitch.tv/activate");
-        ui_text(x + 32, y + 168, C_GREY, 0.95f, "2. Inicia sesion e introduce este codigo:");
+        ui_text(x + 32, y + 168, C_GREY, 0.95f, vt_msg("2. Inicia sesion e introduce este codigo:"));
         ui_round_rect(x + 60, y + 184, 300, 64, 10, C_PANEL2);
         ui_text_center(x + 210, y + 230, C_WHITE, 2.0f, code);
         ui_spinner(x + 400, y + 216, 10, C_PURPLE);
-        ui_text(x + 422, y + 222, C_GREY, 0.85f, "Esperando...");
+        ui_text(x + 422, y + 222, C_GREY, 0.85f, vt_msg("Esperando..."));
         unsigned long long left = expires > now ? (expires - now) / 1000000ULL : 0;
         char t[64];
-        snprintf(t, sizeof(t), "El codigo caduca en %llu:%02llu", left / 60, left % 60);
+        snprintf(t, sizeof(t), vt_msg("El codigo caduca en %llu:%02llu"), left / 60, left % 60);
         ui_text(x + 32, y + h - 50, C_DIM, 0.8f, t);
-        ui_hint(x + w - 150, y + h - 22, g_back_name, "Cancelar");
+        ui_hint(x + w - 150, y + h - 22, g_back_name, vt_msg("Cancelar"));
         frame_end();
     }
 }
@@ -987,6 +1146,151 @@ static void account_screen(void)
         account_logged_in();
     else
         account_login();
+}
+
+
+/* ----------------------------------------------------- SELECT extras menu */
+static void language_screen(void)
+{
+    int sel=vt_lang_current(), first=sel>7?sel-7:0;
+    const int x=198,y=50,w=564,h=440,row=44,visible=8;
+    for(;;) {
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(g_btn_back|SCE_CTRL_SELECT)) return;
+        if(g_in.pressed&SCE_CTRL_UP) sel=(sel+VT_LANG_COUNT-1)%VT_LANG_COUNT;
+        if(g_in.pressed&SCE_CTRL_DOWN) sel=(sel+1)%VT_LANG_COUNT;
+        if(g_in.touch_dy && g_in.touch_dragged) {
+            if(g_in.touch_dy>16 && first>0) {first--;sel=first;}
+            else if(g_in.touch_dy< -16 && first<VT_LANG_COUNT-visible) {first++;sel=first;}
+        }
+        int choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.touch_tap) {
+            for(int k=0;k<visible;k++)
+                if(first+k<VT_LANG_COUNT && ui_touch_hit(&g_in,x+16,y+62+k*row,w-32,row-3)) {
+                    sel=first+k;choose=1;break;
+                }
+        }
+        if(choose) {
+            vt_lang_set(sel);
+            if(g_region==0){g_tabs[TAB_EXPLORE].count=0;g_tabs[TAB_EXPLORE].state=LS_EMPTY;tab_load(TAB_EXPLORE);}
+            settings_save();
+            LOGI("ui language selected: %s",vt_lang_code(sel));
+            return;
+        }
+        if(sel<first) first=sel;
+        if(sel>=first+visible) first=sel-visible+1;
+        frame_begin();
+        draw_home();
+        int bx,by; draw_modal_box(w,h,&bx,&by);
+        ui_text(x+25,y+42,C_WHITE,1.25f,vt_tr(VT_I_LANGUAGE));
+        for(int k=0;k<visible;k++){
+            int i=first+k; if(i>=VT_LANG_COUNT)break;
+            if(i==sel) ui_round_rect(x+12,y+60+k*row,w-24,row-3,6,C_PURPLE);
+            ui_text_fit(x+30,y+90+k*row,w-60,C_WHITE,0.94f,vt_lang_name(i));
+        }
+        ui_text(x+24,y+h-13,C_GREY,0.7f,vt_msg("Up/Down  |  X  |  Back"));
+        frame_end();
+    }
+}
+static void region_screen(void)
+{
+    int sel=g_region,top=sel>7?sel-7:0;
+    const int x=210,y=34,w=540,h=476,row=44,vis=8;
+    int dirty=1;
+    ui_input_poll(&g_in);
+    for(;;){
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(g_btn_back|SCE_CTRL_START|SCE_CTRL_SELECT))return;
+        int before=sel,choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.pressed&SCE_CTRL_UP)sel=(sel+REGION_COUNT-1)%REGION_COUNT;
+        if(g_in.pressed&SCE_CTRL_DOWN)sel=(sel+1)%REGION_COUNT;
+        if(g_in.pressed&SCE_CTRL_LEFT)sel=sel>=vis?sel-vis:0;
+        if(g_in.pressed&SCE_CTRL_RIGHT)sel=sel+vis<REGION_COUNT?sel+vis:REGION_COUNT-1;
+        if(g_in.touch_tap){
+            if(!ui_touch_hit(&g_in,x,y,w,h))return;
+            for(int k=0;k<vis && top+k<REGION_COUNT;k++)
+                if(ui_touch_hit(&g_in,x+16,y+62+k*row,w-32,row-4)){sel=top+k;choose=1;break;}
+        }
+        if(g_in.touch_dragged && g_in.touch_dy>18 && sel>0)sel--;
+        if(g_in.touch_dragged && g_in.touch_dy<-18 && sel<REGION_COUNT-1)sel++;
+        if(choose){
+            g_region=sel;settings_save();
+            tab_t *tb=&g_tabs[TAB_EXPLORE];
+            tb->count=0;tb->sel=0;tb->scroll=0;tb->state=LS_EMPTY;
+            tab_load(TAB_EXPLORE);
+            LOGI("Explore language: %s",region_code());
+            return;
+        }
+        if(sel<top)top=sel;
+        if(sel>=top+vis)top=sel-vis+1;
+        if(before!=sel)dirty=1;
+        if(!dirty){sceKernelDelayThread(8000);continue;}
+        vita2d_start_drawing();vita2d_clear_screen();
+        vita2d_draw_rectangle(x,y,w,h,C_SURFACE);
+        vita2d_draw_rectangle(x,y,w,3,C_PURPLE);
+        ui_text_fit(x+24,y+40,w-48,C_WHITE,1.15f,region_title());
+        for(int k=0;k<vis&&top+k<REGION_COUNT;k++){
+            int i=top+k,ry=y+62+k*row;
+            vita2d_draw_rectangle(x+16,ry,w-32,row-4,i==sel?C_PURPLE:C_PANEL);
+            ui_text_fit(x+28,ry+28,w-140,C_WHITE,0.95f,region_label(i));
+            if(i==g_region)ui_text_fit(x+w-105,ry+28,75,C_WHITE,0.8f,vt_tr(VT_I_ON));
+        }
+        ui_hint(x+24,y+h-22,g_ok_name,vt_tr(VT_I_PLAY));
+        ui_hint(x+w/2,y+h-22,g_back_name,vt_tr(VT_I_BACK));
+        vita2d_end_drawing();vita2d_swap_buffers();dirty=0;
+        sceKernelDelayThread(8000);
+    }
+}
+static void extras_menu(void)
+{
+    /* All entries share the same hit boxes for touch and controller use. */
+    const int x=145,y=20,w=670,h=504,row=35,count=12;
+    int sel=0;
+    for(;;) {
+        ui_input_poll(&g_in);
+        if(g_in.pressed&(SCE_CTRL_SELECT|g_btn_back))return;
+        if(g_in.pressed&SCE_CTRL_UP)sel=(sel+count-1)%count;
+        if(g_in.pressed&SCE_CTRL_DOWN)sel=(sel+1)%count;
+        int choose=!!(g_in.pressed&g_btn_ok);
+        if(g_in.touch_tap){
+            for(int i=0;i<count;i++)
+                if(ui_touch_hit(&g_in,x+14,y+68+i*row,w-28,row-4)){sel=i;choose=1;break;}
+            if(!choose && !ui_touch_hit(&g_in,x,y,w,h))return;
+        }
+        if(choose){
+            switch(sel){
+                case 0: account_screen();break;
+                case 1: language_screen();break;
+                case 2: ui_touch_enable(!ui_touch_enabled());settings_save();break;
+                case 3: g_chat_on=!g_chat_on;settings_save();break;
+                case 4: img_clear();toast(vt_msg("Thumbnail cache cleared"));break;
+                case 5: modal_message("VitaTwitch", vt_msg("19 languages, touchscreen, Twitch chat, hardware video. Independent VitaTwitch fork."));break;
+                case 6:g_profile=(g_profile+1)%VT_PROFILE_COUNT;settings_save();break;
+                case 7:g_auto_quality=!g_auto_quality;settings_save();break;
+                case 8:g_diag=!g_diag;settings_save();break;
+                case 9:g_remember=!g_remember;if(g_remember&&g_logged)auth_save(&g_auth,AUTH_FILE);else sceIoRemove(AUTH_FILE);settings_save();break;
+                case 10:region_screen();break;
+                case 11:return;
+            }
+        }
+        frame_begin();draw_home();
+        int bx,by;draw_modal_box(w,h,&bx,&by);
+        ui_text(x+26,y+41,C_WHITE,1.2f,vt_tr(VT_I_SETTINGS));
+        for(int i=0;i<count;i++){
+            int yy=y+68+i*row;
+            if(sel==i)ui_round_rect(x+14,yy,w-28,row-4,7,C_PURPLE);
+            const char *label=i==0?vt_tr(VT_I_ACCOUNT):i==1?vt_tr(VT_I_LANGUAGE):
+                i==2?vt_tr(VT_I_TOUCH):i==3?vt_tr(VT_I_CHAT):
+                i==4?vt_tr(VT_I_CLEAR_CACHE):i==5?vt_tr(VT_I_ABOUT):i==6?vt_opt(VT_O_PROFILE):i==7?vt_opt(VT_O_AUTO):i==8?vt_opt(VT_O_DIAG):i==9?vt_opt(VT_O_REMEMBER):i==10?region_title():vt_tr(VT_I_CLOSE);
+            ui_text_fit(x+32,yy+31,w-220,C_WHITE,0.97f,label);
+            if(i==1) ui_text_fit(x+w-182,yy+31,157,C_GREY,0.76f,vt_lang_code(vt_lang_current()));
+            if(i==10)ui_text_fit(x+w-215,yy+27,190,C_WHITE,0.83f,region_label(g_region));
+            if(i==6)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,vt_opt((vt_option_id)(VT_O_ECONOMY+g_profile)));
+            if(i==2||i==3||i==7||i==8||i==9)ui_text_fit(x+w-215,yy+31,190,C_WHITE,0.83f,
+                (i==2?ui_touch_enabled():i==3?g_chat_on:i==7?g_auto_quality:i==8?g_diag:g_remember)?vt_tr(VT_I_ON):vt_tr(VT_I_OFF));
+        }
+        frame_end();
+    }
 }
 
 /* ------------------------------------------------------------- init */
@@ -1010,7 +1314,7 @@ static void init_system(void)
     log_open(LOG_FILE, LOG_PREV_FILE);
     log_header();
 
-    scePowerSetArmClockFrequency(444);
+    scePowerSetArmClockFrequency(333);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
@@ -1045,6 +1349,7 @@ static void init_system(void)
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, (int *)&cfg.language);
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, (int *)&cfg.enterButtonAssign);
     sceCommonDialogSetConfigParam(&cfg);
+    vt_lang_auto((int)cfg.language); /* saved lang= still overrides this */
     if (cfg.enterButtonAssign == SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE) {
         g_btn_ok = SCE_CTRL_CIRCLE;
         g_btn_back = SCE_CTRL_CROSS;
@@ -1053,6 +1358,8 @@ static void init_system(void)
     }
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    if (sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT,SCE_TOUCH_SAMPLING_STATE_START)<0)
+        LOGW("touch: failed to enable front panel sampling");
 
     SceRtcTick tick;
     sceRtcGetCurrentTick(&tick);
@@ -1080,7 +1387,7 @@ static void open_selected(void)
     tab_t *tb = &g_tabs[g_tab];
     if (g_tab == TAB_SEARCH && tb->sel < 0) {
         char q[64];
-        if (ime_input("Buscar canal", g_search, q, sizeof(q), 40) && q[0]) {
+        if (ime_input(vt_msg("Buscar canal"), g_search, q, sizeof(q), 40) && q[0]) {
             snprintf(g_search, sizeof(g_search), "%s", q);
             settings_save();
             tb->count = 0;
@@ -1102,7 +1409,8 @@ int main(void)
     for (int t = 0; t < TAB_COUNT; t++)
         g_tabs[t].sel = t == TAB_SEARCH ? -1 : 0;
 
-    if (auth_load(&g_auth, AUTH_FILE) == 0) {
+    if(!g_remember)sceIoRemove(AUTH_FILE);
+    if (g_remember && auth_load(&g_auth, AUTH_FILE) == 0) {
         LOGI("sesion guardada de @%s, comprobando", g_auth.login);
         g_logged = 1;
         g_tab = TAB_FOLLOWED;
@@ -1119,7 +1427,17 @@ int main(void)
     unsigned long long last_tick = 0;
     for (;;) {
         ui_input_poll(&g_in);
+        if(play_state!=PLAY_IDLE){
+            sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND);
+            play_tick();
+            continue;
+        }
         auth_update();
+        if(g_logged&&!g_auth_checking&&net_connected()&&sceKernelGetProcessTimeWide()-g_auth_last_check>3600000000ULL){
+            g_auth_job.a=g_auth;
+            if(task_start(&g_auth_task,auth_check_run,&g_auth_job)==0)g_auth_checking=1;
+            g_auth_last_check=sceKernelGetProcessTimeWide();
+        }
         tabs_update();
         tab_t *tb = &g_tabs[g_tab];
         unsigned p = g_in.pressed;
@@ -1128,13 +1446,48 @@ int main(void)
             break;
         if (p & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
             g_tab = (g_tab + (p & SCE_CTRL_RTRIGGER ? 1 : TAB_COUNT - 1)) % TAB_COUNT;
+            g_touch_manual_scroll=0;
             if (g_tabs[g_tab].state == LS_EMPTY || g_tabs[g_tab].state == LS_ERROR)
                 tab_load(g_tab);
             continue;
         }
         if (p & SCE_CTRL_SELECT) {
-            account_screen();
+            extras_menu();
             continue;
+        }
+        if(g_in.touch_tap && g_in.touch_y<HEADER_H) {
+            if(g_in.touch_x>745) {extras_menu();continue;}
+            for(int t=0;t<TAB_COUNT;t++){
+                int tx=TAB_X+t*TAB_STEP;
+                if(g_in.touch_x>=tx && g_in.touch_x<tx+TAB_W){
+                    g_tab=t;g_touch_manual_scroll=0;
+                    if(g_tabs[t].state==LS_EMPTY||g_tabs[t].state==LS_ERROR)tab_load(t);
+                    break;
+                }
+            }
+            continue;
+        }
+        if(g_in.touch_down && g_in.touch_dragged && g_in.touch_y>=grid_top(g_tab)
+           && g_in.touch_y<FOOTER_Y){
+            g_touch_manual_scroll=1;
+            tb->scroll-=g_in.touch_dy;
+        }
+        if(g_in.touch_tap && g_in.touch_y>=HEADER_H && g_in.touch_y<FOOTER_Y){
+            int top=grid_top(g_tab);
+            if(g_tab==TAB_SEARCH && g_in.touch_y<top){
+                tb->sel=-1;g_touch_manual_scroll=0;open_selected();continue;
+            }
+            int yy=g_in.touch_y-top+(int)tb->scroll;
+            int xx=g_in.touch_x-GRID_X;
+            if(yy>=0 && xx>=0 && xx<COLS*(CARD_W+GAP_X)){
+                int col=xx/(CARD_W+GAP_X), row=yy/ROW_PITCH;
+                if(xx%(CARD_W+GAP_X)<CARD_W && yy%ROW_PITCH<CARD_H){
+                    int index=row*COLS+col;
+                    if(tb->state==LS_READY&&index>=0&&index<tb->count){
+                        tb->sel=index;g_touch_manual_scroll=0;open_selected();continue;
+                    }
+                }
+            }
         }
         if (p & SCE_CTRL_TRIANGLE) {
             img_clear(); /* thumbnails are refreshed by Twitch every few minutes */
@@ -1145,11 +1498,13 @@ int main(void)
             if (twitch_sanitize_login(g_search, login, sizeof(login)) >= 3)
                 play_channel(login, login, NULL);
             else
-                toast("Ese nombre no es un canal valido");
+                toast(vt_msg("Ese nombre no es un canal valido"));
             continue;
         }
 
         /* grid navigation */
+        if(p&(SCE_CTRL_UP|SCE_CTRL_DOWN|SCE_CTRL_LEFT|SCE_CTRL_RIGHT))
+            g_touch_manual_scroll=0;
         int n = tb->state == LS_READY ? tb->count : 0;
         int min_sel = g_tab == TAB_SEARCH ? -1 : 0;
         if (p & SCE_CTRL_RIGHT && tb->sel >= 0 && tb->sel + 1 < n) tb->sel++;
@@ -1180,6 +1535,7 @@ int main(void)
         frame_end();
     }
 
+    if(play_state==PLAY_FETCH||play_state==PLAY_CANCEL){task_cancel(&play_task);task_wait(&play_task);}
     for (int t = 0; t < TAB_COUNT; t++)
         if (g_tabs[t].busy) {
             task_cancel(&g_tabs[t].task);

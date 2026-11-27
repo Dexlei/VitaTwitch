@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "chat.h"
 #include "json.h"
 #include "log.h"
@@ -88,6 +89,20 @@ int irc_tag(const irc_line_t *l, const char *key, char *out, size_t cap)
         p = *end ? end + 1 : end;
     }
     return -1;
+}
+
+/* Chat outgoing validation is kept host-testable (no network dependencies).
+ * Reject CR/LF/CTRL framing injection and messages longer than 450 UTF-8 bytes. */
+int chat_prepare_outgoing(const char *in,char *out,size_t cap){
+    if(!in||!out||cap<2)return -1;
+    const unsigned char *p=(const unsigned char*)in;
+    while(*p==' '||*p=='\t')p++;
+    size_t n=strlen((const char*)p);
+    while(n&&((char)p[n-1]==' '||(char)p[n-1]=='\t'))n--;
+    if(n==0||n>450||n>=cap)return -1;
+    for(size_t i=0;i<n;i++)if(p[i]<0x20||p[i]==0x7f)return -1;
+    memcpy(out,p,n);out[n]=0;
+    return (int)n;
 }
 
 /* ============================================================= emotes */
@@ -506,11 +521,12 @@ static struct {
     int head, count;
     volatile unsigned version; /* bumped on every new message */
     char status[96];
-    char login[32];
+    char login[32]; /* channel */
     volatile int running;
     volatile int stop;         /* curl abort flag */
     volatile int alive;
-    SceUID thread;
+    pthread_t thread;
+    int thread_started;
 } C;
 
 static void set_status(const char *fmt, ...)
@@ -576,7 +592,7 @@ static void load_badges(const char *room_id)
     for (const char *p = room_id; *p; p++)
         if (*p < '0' || *p > '9')
             return; /* room-id is numeric */
-    set_status("Cargando insignias...");
+    set_status(vt_msg("Cargando insignias..."));
     if (twitch_gql(global_q, NULL, &b, err, sizeof(err), &C.stop) == 0)
         g = chat_load_badges((const char *)b.data);
     snprintf(body, sizeof(body),
@@ -598,7 +614,7 @@ static void load_7tv(const char *room_id)
 
     if (!c)
         return;
-    set_status("Cargando emotes de 7TV...");
+    set_status(vt_msg("Cargando emotes de 7TV..."));
     if (http_request(c, "https://7tv.io/v3/emote-sets/global", NULL, NULL, &b, &status, &C.stop) == 0 && status == 200) {
         int n = chat_load_7tv((const char *)b.data);
         if (n > 0) total += n;
@@ -617,9 +633,9 @@ static void load_7tv(const char *room_id)
     buf_free(&b);
     http_free(c);
     if (chan > 0)
-        set_status("Conectado - 7TV: %d emotes del canal", chan);
+        set_status(vt_msg("Conectado - 7TV: %d emotes del canal"), chan);
     else
-        set_status(total > 0 ? "Conectado - 7TV: solo globales" : "Conectado");
+        set_status(total > 0 ? vt_msg("Conectado - 7TV: solo globales") : vt_msg("Conectado"));
 }
 
 static int abort_cb(void *p, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d)
@@ -628,23 +644,28 @@ static int abort_cb(void *p, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_
     return C.stop ? 1 : 0;
 }
 
-static int chat_thread(SceSize args, void *argp)
+static void *chat_thread(void *argp)
 {
     static char rbuf[16384];
     static irc_line_t line;
     static chat_msg_t msg;
     int backoff = 1, emotes_done = 0;
     char room_id[32] = "";
-    (void)args; (void)argp;
+    (void)argp;
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_2);
+    LOGI("chat: legacy anonymous worker started");
 
     while (C.running) {
-        set_status("Conectando al chat...");
+        set_status(vt_msg("Conectando al chat..."));
         CURL *c = curl_easy_init();
         int ok = 0;
         if (c) {
             curl_easy_setopt(c, CURLOPT_URL, "https://irc.chat.twitch.tv:6697");
             curl_easy_setopt(c, CURLOPT_CONNECT_ONLY, 1L);
             curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+            curl_easy_setopt(c, CURLOPT_TIMEOUT, 12L);
+            curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+            /* Legacy anonymous read-only compatibility: no OAuth credentials are available here. */
             curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
             curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, abort_cb);
@@ -693,21 +714,21 @@ static int chat_thread(SceSize args, void *argp)
                 *nl = 0;
                 if (irc_parse(start, &line) == 0) {
                     if (!strcmp(line.command, "PING")) {
-                        char pong[160];
-                        snprintf(pong, sizeof(pong), "PONG :%s\r\n", line.trailing);
+                        char pong[513];
+                        snprintf(pong, sizeof(pong), "PONG :%.504s\r\n", line.trailing);
                         irc_send(c, pong);
                     } else if (!strcmp(line.command, "ROOMSTATE")) {
                         if (!room_id[0])
                             irc_tag(&line, "room-id", room_id, sizeof(room_id));
                     } else if (!strcmp(line.command, "JOIN")) {
-                        set_status("Conectado");
+                        set_status(vt_msg("Conectado"));
                         LOGI("chat: conectado a #%s", C.login);
-                        push_system("Conectado al chat");
+                        push_system(vt_msg("Conectado al chat"));
                     } else if (!strcmp(line.command, "RECONNECT")) {
                         LOGI("chat: el servidor pide reconectar");
                         ok = 0;
                     } else if (!strcmp(line.command, "CLEARCHAT") && !line.has_trailing) {
-                        push_system("El chat ha sido borrado por un moderador");
+                        push_system(vt_msg("El chat ha sido borrado por un moderador"));
                     } else if (!strcmp(line.command, "NOTICE")) {
                         LOGW("chat: aviso del servidor: %s", line.trailing);
                     } else if (chat_build_msg(&line, &msg) == 0) {
@@ -725,22 +746,24 @@ static int chat_thread(SceSize args, void *argp)
             curl_easy_cleanup(c);
         if (!C.running)
             break;
-        set_status("Chat desconectado, reintentando en %d s...", backoff);
+        set_status(vt_msg("Chat desconectado, reintentando en %d s..."), backoff);
         for (int i = 0; i < backoff * 10 && C.running; i++)
             sceKernelDelayThread(100000);
         if (backoff < 30)
             backoff *= 2;
     }
     C.alive = 0;
-    return sceKernelExitDeleteThread(0);
+    return NULL;
 }
 
 void chat_start(const char *login)
 {
-    if (C.running)
+    if (C.running || C.thread_started || !login || !*login)
         return;
+    for (const char *q = login; *q; ++q)
+        if (!((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') || (*q >= '0' && *q <= '9') || *q == '_')) return;
     if (!C.lock_ok) {
-        pthread_mutex_init(&C.lock, NULL);
+        if (pthread_mutex_init(&C.lock, NULL) != 0) return;
         C.lock_ok = 1;
     }
     if (!C.msgs)
@@ -749,28 +772,37 @@ void chat_start(const char *login)
         return;
     chat_emotes_reset();
     C.head = C.count = 0;
+    C.version++;
     snprintf(C.login, sizeof(C.login), "%s", login);
-    snprintf(C.status, sizeof(C.status), "Conectando al chat...");
+    snprintf(C.status, sizeof(C.status), "%s", vt_msg("Conectando al chat..."));
     C.running = 1;
     C.stop = 0;
     C.alive = 1;
-    C.thread = sceKernelCreateThread("vt_chat", chat_thread, 0x10000100 + 20, 256 * 1024, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
-    if (C.thread < 0 || sceKernelStartThread(C.thread, 0, NULL) < 0) {
-        LOGE("chat: no se pudo crear el hilo");
+    pthread_attr_t attr;
+    int rc = pthread_attr_init(&attr);
+    if (rc == 0) {
+        rc = pthread_attr_setstacksize(&attr, 256 * 1024);
+        if (rc == 0) rc = pthread_create(&C.thread, &attr, chat_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+    if (rc != 0) {
+        LOGE("chat: worker creation failed (%d)", rc);
         C.running = 0;
         C.alive = 0;
+        set_status(vt_msg("Chat desconectado, reintentando en %d s..."), 0);
+    } else {
+        C.thread_started = 1;
     }
 }
 
 void chat_stop(void)
 {
-    if (!C.running && !C.alive)
-        return;
     C.running = 0;
     C.stop = 1;
-    /* curl's request timeout is 20 s; the IRC loop polls every 30 ms */
-    for (int i = 0; i < 2500 && C.alive; i++)
-        sceKernelDelayThread(10000);
+    if (C.thread_started) {
+        pthread_join(C.thread, NULL);
+        C.thread_started = 0;
+    }
 }
 
 int chat_running(void) { return C.running; }

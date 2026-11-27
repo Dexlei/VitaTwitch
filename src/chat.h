@@ -2,8 +2,8 @@
 #define VT_CHAT_H
 
 /*
- * Read-only Twitch chat (anonymous IRC over TLS, like the web player when
- * logged out) with Twitch and 7TV emotes.
+ * Twitch IRC over TLS with anonymous read-only mode and optional authenticated
+ * sending (chat:read/chat:edit scopes). Includes Twitch and 7TV emotes.
  *
  * The parsing / emote part is plain C and is tested on the PC
  * (tests/chat_test.c); the network thread only exists on the Vita.
@@ -88,8 +88,11 @@ int chat_load_badges(const char *json);
 int chat_resolve_badges(const char *tag, int16_t *out, int max);
 
 /* ---- live chat (Vita only) ---- */
+/* Legacy anonymous IRC reader. No account credentials are accepted. */
 void chat_start(const char *login);
 void chat_stop(void);
+/* Pure safety parser used by Vita and host regression tests. */
+int chat_prepare_outgoing(const char *in,char *out,size_t cap);
 int chat_running(void);
 /* Locks the message list for reading; recent(0) is the newest. */
 void chat_lock(void);

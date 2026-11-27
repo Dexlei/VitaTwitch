@@ -1,3 +1,4 @@
+#include "i18n.h"
 /* Chat panel drawing (main thread). */
 #include "chat_view.h"
 #include "chat.h"
@@ -133,7 +134,7 @@ static void render_panel(int x, int y, int w, int h, vita2d_pgf *f, const char *
 
     vita2d_draw_rectangle(x, y, w, h, COL_BG);
     vita2d_draw_rectangle(x, y, w, HEADER, COL_HEADER);
-    snprintf(title, sizeof(title), "Chat de %s", channel ? channel : "");
+    snprintf(title, sizeof(title), vt_msg("Chat de %s"), channel ? channel : "");
     vita2d_pgf_draw_text(f, x + PAD, y + 22, COL_TEXT, 0.85f, title);
     chat_status(status, sizeof(status));
     vita2d_pgf_draw_text(f, x + PAD, y + HEADER + 18, COL_GREY, 0.7f, status);
