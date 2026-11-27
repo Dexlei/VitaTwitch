@@ -8,6 +8,7 @@
 #include "hls.h"
 #include "adts.h"
 #include "http.h"
+#include "twitch.h"
 #include "log.h"
 
 #include <stdio.h>
@@ -77,7 +78,7 @@ static int hls_thread(SceSize args, void *argp)
     buf_t pl = {0}, seg = {0};
     static m3u8_media_t media; /* large; only one downloader runs at a time */
     long long next_seq = -1;
-    int fails = 0, segment_failures = 0;
+    int fails = 0, segment_failures = 0, ad_probed = 0;
     unsigned long long last_new = sceKernelGetProcessTimeWide();
     long status = 0;
 
@@ -132,11 +133,22 @@ static int hls_thread(SceSize args, void *argp)
                     demux_discontinuity(h);
                 }
                 h->in_ad = 1;
+                /* Only probe if the live edge is still advertising. If clean
+                 * content is already in this playlist, just resume it. */
+                if(!ad_probed && h->backup_url && h->channel &&
+                   media.seg[media.count-1].is_ad){
+                    ad_probed=1;
+                    LOGI("hls: checking direct alternate session");
+                    if(twitch_find_clean_variant(h->channel,h->oauth,h->url,
+                        h->width,h->height,h->fps,h->backup_url,&h->abort_req))
+                        goto done;
+                }
                 continue;
             }
             if (h->in_ad) {
                 LOGI("hls: live content resumed");
                 demux_discontinuity(h);
+                ad_probed=0;
             }
             h->in_ad = 0;
             if (s->discontinuity)
@@ -209,6 +221,7 @@ static int hls_thread(SceSize args, void *argp)
         }
     }
 
+done:
     buf_free(&pl);
     buf_free(&seg);
     http_free(c);
@@ -216,9 +229,13 @@ static int hls_thread(SceSize args, void *argp)
     return sceKernelExitDeleteThread(0);
 }
 
-int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, int live_edge)
+int hls_start(hls_t *h, const char *media_url, pktqueue_t *vq, pktqueue_t *aq, int live_edge,
+              const char *channel,const char *oauth,int width,int height,float fps,char *backup_url)
 {
     memset(h, 0, sizeof(*h));
+    h->channel=channel;h->oauth=oauth;h->width=width;h->height=height;h->fps=fps;
+    h->backup_url=backup_url;
+    if(backup_url)backup_url[0]=0;
     snprintf(h->url, sizeof(h->url), "%s", media_url);
     h->live_edge=live_edge<1?1:live_edge>6?6:live_edge;
     h->vq = vq;
