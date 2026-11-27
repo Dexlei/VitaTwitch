@@ -35,6 +35,7 @@ add_executable(${PROJECT_NAME}
   src/text.c
   src/chat.c
   src/chat_view.c
+  src/i18n.c
   src/mp4_demux.c
 )
 
@@ -47,6 +48,7 @@ target_link_libraries(${PROJECT_NAME}
   SceGxm_stub
   SceDisplay_stub
   SceCtrl_stub
+  SceTouch_stub
   SceCommonDialog_stub
   SceAppUtil_stub
   SceAppMgr_stub

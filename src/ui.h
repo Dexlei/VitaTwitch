@@ -50,7 +50,14 @@ typedef struct {
     unsigned held, pressed;
     unsigned prev;
     unsigned long long repeat_at;
+    /* Front touch coordinates are normalized to 960 x 544. Tap is delivered
+     * only on release and never after a drag (prevents accidental stream opens). */
+    int touch_down, touch_prev_down, touch_tap, touch_dragged;
+    int touch_x, touch_y, touch_start_x, touch_start_y, touch_last_y, touch_dy;
 } ui_input_t;
+void ui_touch_enable(int enabled);
+int ui_touch_enabled(void);
+int ui_touch_hit(const ui_input_t *in,int x,int y,int w,int h);
 void ui_input_poll(ui_input_t *in);
 
 #endif

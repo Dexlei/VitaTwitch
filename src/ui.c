@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <psp2/ctrl.h>
+#include <psp2/touch.h>
 #include <psp2/kernel/processmgr.h>
 
 vita2d_pgf *ui_font;
@@ -117,6 +118,14 @@ void ui_fmt_viewers(int v, char *out, size_t cap)
 }
 
 #define DPAD (SCE_CTRL_UP | SCE_CTRL_DOWN | SCE_CTRL_LEFT | SCE_CTRL_RIGHT)
+static int g_touch_enabled = 1;
+void ui_touch_enable(int enabled) { g_touch_enabled = enabled != 0; }
+int ui_touch_enabled(void) {return g_touch_enabled;}
+int ui_touch_hit(const ui_input_t *in,int x,int y,int w,int h) {
+    return in && in->touch_tap && in->touch_x >= x && in->touch_x < x+w &&
+           in->touch_y >= y && in->touch_y < y+h;
+}
+
 
 void ui_input_poll(ui_input_t *in)
 {
@@ -140,4 +149,35 @@ void ui_input_poll(ui_input_t *in)
     }
     in->held = b;
     in->prev = b;
+    in->touch_tap = 0;
+    in->touch_dy = 0;
+    SceTouchData touch;
+    memset(&touch, 0, sizeof(touch));
+    int down = g_touch_enabled && sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1) > 0 &&
+               touch.reportNum > 0;
+    if (down) {
+        int x = touch.report[0].x / 2, y = touch.report[0].y / 2;
+        if (x < 0) x = 0;
+        if (x >= SCREEN_W) x = SCREEN_W-1;
+        if (y < 0) y = 0;
+        if (y >= SCREEN_H) y = SCREEN_H-1;
+        if (!in->touch_prev_down) {
+            in->touch_start_x = x;
+            in->touch_start_y = y;
+            in->touch_last_y = y;
+            in->touch_dragged = 0;
+        } else {
+            in->touch_dy = y - in->touch_last_y;
+            int dx=x-in->touch_start_x, dy=y-in->touch_start_y;
+            if (dx*dx+dy*dy > 16*16) in->touch_dragged = 1;
+        }
+        in->touch_x = x;
+        in->touch_y = y;
+        in->touch_last_y = y;
+    } else if (in->touch_prev_down) {
+        in->touch_tap = !in->touch_dragged;
+        in->touch_dragged = 0;
+    }
+    in->touch_down = down;
+    in->touch_prev_down = down;
 }
