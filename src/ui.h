@@ -8,10 +8,10 @@
 #define SCREEN_H 544
 
 /* Twitch-like dark palette */
-#define C_BG       RGBA8(14, 14, 16, 255)
-#define C_SURFACE  RGBA8(24, 24, 27, 255)
-#define C_PANEL    RGBA8(31, 31, 35, 255)
-#define C_PANEL2   RGBA8(46, 46, 53, 255)
+#define C_BG       RGBA8(12, 10, 19, 255)
+#define C_SURFACE  RGBA8(23, 20, 33, 255)
+#define C_PANEL    RGBA8(34, 29, 46, 255)
+#define C_PANEL2   RGBA8(48, 40, 66, 255)
 #define C_PURPLE   RGBA8(145, 70, 255, 255)
 #define C_PURPLE_D RGBA8(119, 44, 232, 255)
 #define C_WHITE    RGBA8(239, 239, 241, 255)
