@@ -1,0 +1,97 @@
+name: VitaTwitch — 19 languages, touch and chat SEND experimental checks
+on:
+  push:
+    branches: ['features/i18n19-touch-select-chat-send']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: twitch-vita-feature-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: 19 locale catalogs + multilingual keyboard conversion
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra -Werror -Isrc tests/i18n_test.c src/i18n.c -o /tmp/vt-locale-test
+          /tmp/vt-locale-test
+          gcc -std=c11 -Wall -Wextra -Werror -Isrc tests/ime_utf8_test.c src/ime_utf8.c -o /tmp/vt-keyboard-test
+          /tmp/vt-keyboard-test
+      - name: IRC message sanitization and UTF-8 security checks
+        run: |
+          set -euo pipefail
+          gcc -DVT_NO_NET -std=gnu11 -Wall -Wextra -Isrc \
+            tests/chat_send_test.c src/chat.c src/json.c src/text.c src/log.c \
+            -o /tmp/vt-chat-send-test
+          /tmp/vt-chat-send-test
+      - name: Verify Vita source wiring without altering original player codecs
+        run: |
+          set -euo pipefail
+          grep -q 'SceTouch_stub' CMakeLists.txt
+          grep -q 'src/i18n.c' CMakeLists.txt
+          grep -q 'src/ime_utf8.c' CMakeLists.txt
+          grep -Fq 'CURLOPT_SSL_VERIFYPEER, 1L' src/chat.c
+          grep -Fq 'vt_utf16_to_utf8' src/player.c
+          grep -Fq 'SCE_CTRL_SELECT' src/player.c
+          grep -Fq 'vt_lang_set_code' src/main.c
+  vita-sdk-vpk:
+    needs: host-unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download current Mozilla CA bundle for verified Twitch IRC TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          curl --fail --location --retry 3 --show-error --silent https://curl.se/ca/cacert.pem -o assets/cacert.pem
+          test "$(grep -c -- '-----BEGIN CERTIFICATE-----' assets/cacert.pem)" -ge 100
+          sha256sum assets/cacert.pem | tee ca-bundle.sha256
+          echo 'The CA file is obtained over verified GitHub Actions runner HTTPS.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile VitaTwitch with VitaSDK (no public release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src -e VITASDK=/usr/local/vitasdk \
+            vitasdk/vitasdk:2026.08 bash -lc '
+              set -euo pipefail
+              export PATH="$VITASDK/bin:$PATH"
+              vdpm install libvita2d libpng libjpeg-turbo curl openssl zlib zstd
+              cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+              cmake --build build-ci --target VitaTwitch-vpk -j4
+            '
+      - name: Validate real VPK contents, CA trust store and version
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,struct,zipfile
+          pkg=pathlib.Path('build-ci/VitaTwitch.vpk')
+          assert pkg.is_file() and pkg.stat().st_size>500000,pkg
+          with zipfile.ZipFile(pkg) as z:
+            assert z.testzip() is None
+            names=set(z.namelist())
+            assert 'eboot.bin' in names
+            assert 'ca/cacert.pem' in names
+            cert=z.read('ca/cacert.pem')
+            assert cert.count(b'-----BEGIN CERTIFICATE-----')>=100
+            sfo=z.read('sce_sys/param.sfo')
+            assert b'VTWI00001' in sfo
+            assert b'01.33' in sfo
+          print('PASS experimental VitaSDK VPK, version 01.33, title ID and trusted IRC CA bundle')
+          PY
+          cp build-ci/VitaTwitch.vpk VitaTwitch-1.33-EXPERIMENTAL.vpk
+          sha256sum VitaTwitch-1.33-EXPERIMENTAL.vpk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VitaTwitch-1.33-19-lang-SELECT-touch-IRC-send-EXPERIMENTAL
+          path: |
+            VitaTwitch-1.33-EXPERIMENTAL.vpk
+            SHA256SUMS.txt
+            ca-bundle.sha256
+          retention-days: 14
+          if-no-files-found: error
