@@ -833,7 +833,8 @@ static void play_channel(const char *login, const char *display, const char *tit
 
     ui_clean_text(title ? title : "", clean_title, sizeof(clean_title));
     player_params_t pp;
-    int retries=0, reductions=0, r=0;
+    int retries=0, reductions=0, r=0, ad_switched=0;
+    char ad_backup[M3U8_URL_MAX]={0};
     char wanted[48];
     m3u8_variant_t previous;
     for(;;){
@@ -854,6 +855,7 @@ static void play_channel(const char *login, const char *display, const char *tit
     pp.profile=g_profile;pp.auto_quality=g_auto_quality;
     pp.has_lower=vt_profile_lower(list,count,list[sel])>=0;
     pp.diagnostics=g_diag;pp.volume=&g_volume;
+    pp.ad_backup_url=ad_switched?NULL:ad_backup;
     {
         char u[160];
         LOGI("reproducir %s en %s: %s", login, pp.quality, log_url(pp.url, u, sizeof(u)));
@@ -862,6 +864,12 @@ static void play_channel(const char *login, const char *display, const char *tit
     r = player_run(&pp, err, sizeof(err));
     scePowerSetArmClockFrequency(333);
     settings_save();
+    if(r==PLAYER_AD_SWITCH && !ad_switched && ad_backup[0]){
+        ad_switched=1;
+        snprintf(list[sel]->url,sizeof(list[sel]->url),"%s",ad_backup);
+        LOGI("player: reopening on verified alternate HLS session");
+        continue;
+    }
     if(r!=PLAYER_RECONNECT&&r!=PLAYER_LOWER_QUALITY)break;
     if(r==PLAYER_RECONNECT&&++retries>2){r=-1;break;}
     if(r==PLAYER_LOWER_QUALITY&&++reductions>4){r=-1;break;}
